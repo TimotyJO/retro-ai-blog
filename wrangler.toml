@@ -5,6 +5,11 @@ name = "retro-ai-blog"
 main = "worker.js"
 compatibility_date = "2026-07-09"
 
+# Custom domain routing
+routes = [
+  "jemioktavian.my.id/*"
+]
+
 # Secrets are NOT stored here. Set via:
 #   wrangler secret put OPENROUTER_API_KEY
 #   wrangler secret put SUPABASE_ANON_KEY
