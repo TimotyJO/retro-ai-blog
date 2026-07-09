@@ -144,18 +144,8 @@ async function handleAPI(request, env, url, headers) {
     const { topic, keywords, category } = body;
     const categories = ['ai', 'marketing', 'freelance', 'coding', 'crypto'];
     const finalCategory = category || categories[Math.floor(Math.random() * categories.length)];
-    const pools = await getTopicPools(env);
-    const defaultPool = {
-      ai: ['Masa Depan AI Generatif di Indonesia', 'Cara Kerja LLM untuk Pemula', 'Etika AI: Antara Manfaat dan Risiko'],
-      marketing: ['Strategi Content Marketing ala 90an', 'Membangun Brand Personality', 'Psychology of Nostalgia dalam Iklan'],
-      freelance: ['Tips Negosiasi Rate Freelancer', 'Membangun Portfolio Menonjol', 'Manajemen Waktu ala Gamer'],
-      coding: ['Belajar Coding dari Nol', 'Debugging itu Seni', 'Clean Code untuk Pemula'],
-      crypto: ['Blockchain dalam Bahasa Sehari-hari', 'Manajemen Risiko Crypto', 'NFT dan Masa Depan Kepemilikan Digital']
-    };
-    const pool = (pools && pools[finalCategory] && pools[finalCategory].length) ? pools[finalCategory] : (defaultPool[finalCategory] || defaultPool.ai);
-    const finalTopic = topic || pool[Math.floor(Math.random() * pool.length)];
     const pipeline = new ArticlePipeline(env);
-    const result = await pipeline.generateArticle(finalTopic, keywords, finalCategory);
+    const result = await pipeline.generateArticle(topic, keywords, finalCategory);
     return new Response(JSON.stringify(result), { headers });
   }
 
@@ -261,17 +251,7 @@ async function handleAPI(request, env, url, headers) {
     if (write_by_ai) {
       const categories = ['ai', 'marketing', 'freelance', 'coding', 'crypto'];
       const finalCategory = category || categories[Math.floor(Math.random() * categories.length)];
-      const pools = await getTopicPools(env);
-      const defaultPool = {
-        ai: ['Masa Depan AI Generatif di Indonesia', 'Cara Kerja LLM untuk Pemula', 'Etika AI: Antara Manfaat dan Risiko'],
-        marketing: ['Strategi Content Marketing ala 90an', 'Membangun Brand Personality', 'Psychology of Nostalgia dalam Iklan'],
-        freelance: ['Tips Negosiasi Rate Freelancer', 'Membangun Portfolio Menonjol', 'Manajemen Waktu ala Gamer'],
-        coding: ['Belajar Coding dari Nol', 'Debugging itu Seni', 'Clean Code untuk Pemula'],
-        crypto: ['Blockchain dalam Bahasa Sehari-hari', 'Manajemen Risiko Crypto', 'NFT dan Masa Depan Kepemilikan Digital']
-      };
-      const pool = (pools && pools[finalCategory] && pools[finalCategory].length) ? pools[finalCategory] : (defaultPool[finalCategory] || defaultPool.ai);
-      const finalTopic = topic || pool[Math.floor(Math.random() * pool.length)];
-      const result = await pipeline.generateArticle(finalTopic, keywords || [], finalCategory);
+      const result = await pipeline.generateArticle(topic, keywords || [], finalCategory);
       const status = result.success ? 200 : 500;
       return new Response(JSON.stringify(result), { status, headers });
     }
@@ -427,6 +407,28 @@ class ArticlePipeline {
     this.maxRetries = 3;
   }
 
+  async generateTopic(category) {
+    const catLabels = { ai:'AI', marketing:'Marketing', freelance:'Freelance', coding:'Coding', crypto:'Crypto' };
+    const label = catLabels[category] || category;
+    const prompt = `Buat satu judul artikel blog dalam Bahasa Indonesia yang segar, unik, dan spesifik tentang ${label}. Topik harus menggugah rasa penasaran, tidak klise, dan relevan dengan tren 2025-2026. Hanya output judulnya saja, tanpa penjelasan, tanpa tanda kutip, tanpa bullet.`;
+    try {
+      const result = await this.callLLM('openrouter', this.models[0], 'Kamu adalah creative director yang ahli bikin headline artikel.', prompt, 120);
+      const topic = (result || '').trim().replace(/^["'\s]+|["'\s]+$/g, '').replace(/\n/g, ' ').substring(0, 120);
+      if (topic && topic.length > 10) return topic;
+    } catch (e) {}
+    // fallback to pool
+    const pools = await getTopicPools(this.env);
+    const defaults = {
+      ai: ['Masa Depan AI Generatif di Indonesia', 'Cara Kerja LLM untuk Pemula', 'Etika AI: Antara Manfaat dan Risiko'],
+      marketing: ['Strategi Content Marketing 2026', 'Membangun Brand Personality', 'Psychology of Nostalgia dalam Iklan'],
+      freelance: ['Tips Negosiasi Rate Freelancer', 'Membangun Portfolio Menonjol', 'Manajemen Waktu ala Gamer'],
+      coding: ['Belajar Coding dari Nol', 'Debugging itu Seni', 'Clean Code untuk Pemula'],
+      crypto: ['Blockchain dalam Bahasa Sehari-hari', 'Manajemen Risiko Crypto', 'NFT dan Masa Depan Kepemilikan Digital']
+    };
+    const pool = (pools && pools[category] && pools[category].length) ? pools[category] : (defaults[category] || defaults.ai);
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+
   async generateArticle(topic, keywords, category) {
     const queueId = await this.createQueue(topic, keywords, category);
 
@@ -442,6 +444,12 @@ class ArticlePipeline {
       this.models = [...this.fallbackModels];
     }
     this.systemPrompt = (cfg && cfg.role_prompt) ? cfg.role_prompt : this.defaultSystem;
+
+    // IF TOPIC IS EMPTY - AI generates it
+    if (!topic || !topic.trim()) {
+      topic = await this.generateTopic(category);
+      await this.updateQueue(queueId, { topic });
+    }
 
     // STEP 1: Outline (MUST PASS)
     const step1 = await this.runStep(queueId, 1, 'outline', topic, keywords, null);
