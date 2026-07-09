@@ -257,13 +257,25 @@ async function handleAPI(request, env, url, headers) {
     let body = {};
     try { body = await request.json(); } catch (e) { body = {}; }
     const { title, category, content, write_by_ai, topic, keywords } = body;
-    if (!title) return new Response(JSON.stringify({ error: 'Title required' }), { status: 400, headers });
     const pipeline = new ArticlePipeline(env);
     if (write_by_ai) {
-      const result = await pipeline.generateArticle(topic || title, keywords || [], category || 'general');
+      const categories = ['ai', 'marketing', 'freelance', 'coding', 'crypto'];
+      const finalCategory = category || categories[Math.floor(Math.random() * categories.length)];
+      const pools = await getTopicPools(env);
+      const defaultPool = {
+        ai: ['Masa Depan AI Generatif di Indonesia', 'Cara Kerja LLM untuk Pemula', 'Etika AI: Antara Manfaat dan Risiko'],
+        marketing: ['Strategi Content Marketing ala 90an', 'Membangun Brand Personality', 'Psychology of Nostalgia dalam Iklan'],
+        freelance: ['Tips Negosiasi Rate Freelancer', 'Membangun Portfolio Menonjol', 'Manajemen Waktu ala Gamer'],
+        coding: ['Belajar Coding dari Nol', 'Debugging itu Seni', 'Clean Code untuk Pemula'],
+        crypto: ['Blockchain dalam Bahasa Sehari-hari', 'Manajemen Risiko Crypto', 'NFT dan Masa Depan Kepemilikan Digital']
+      };
+      const pool = (pools && pools[finalCategory] && pools[finalCategory].length) ? pools[finalCategory] : (defaultPool[finalCategory] || defaultPool.ai);
+      const finalTopic = topic || pool[Math.floor(Math.random() * pool.length)];
+      const result = await pipeline.generateArticle(finalTopic, keywords || [], finalCategory);
       const status = result.success ? 200 : 500;
       return new Response(JSON.stringify(result), { status, headers });
     }
+    if (!title) return new Response(JSON.stringify({ error: 'Title required' }), { status: 400, headers });
     const article = {
       title,
       slug: pipeline.slugify(title),
@@ -581,7 +593,7 @@ class ArticlePipeline {
     if (!url) throw new Error('No base URL for ' + providerName);
 
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 25000);
+    const timer = setTimeout(() => ctrl.abort(), 120000);
 
     try {
     if (providerName === 'anthropic') {
@@ -1714,8 +1726,8 @@ async function renderAdmin(env, headers) {
 var PROV_NAMES = ['openrouter','deepseek'];
 var PROV_LABELS = {openrouter:'OpenRouter',deepseek:'DeepSeek'};
 var PROV_DEFAULTS = {openrouter:'https://openrouter.ai/api/v1/chat/completions',deepseek:'https://api.deepseek.com/v1/chat/completions'};
-  var PROV_MODELS = {openrouter:'',deepseek:'deepseek-v4-flash'};
-  var PROV_MODEL_LISTS = {deepseek:[{id:'deepseek-v4-flash',name:'DeepSeek V4 Flash (deepseek-v4-flash)'},{id:'deepseek-v4-pro',name:'DeepSeek V4 Pro (deepseek-v4-pro)'},{id:'deepseek-chat',name:'DeepSeek Chat (deepseek-chat) — deprecated 2026/07/24'},{id:'deepseek-reasoner',name:'DeepSeek Reasoner (deepseek-reasoner) — deprecated 2026/07/24'}]};
+  var PROV_MODELS = {openrouter:'',deepseek:'deepseek-chat'};
+  var PROV_MODEL_LISTS = {deepseek:[{id:'deepseek-chat',name:'DeepSeek Chat (deepseek-chat)'},{id:'deepseek-v4-flash',name:'DeepSeek Flash (deepseek-v4-flash)'},{id:'deepseek-v4-pro',name:'DeepSeek V4 Pro (deepseek-v4-pro)'},{id:'deepseek-reasoner',name:'DeepSeek Reasoner (deepseek-reasoner)'}]};
   function modelCtrl(cat, prov, current){
     var sel='font-family:inherit;font-size:10px;padding:10px;width:100%;background:var(--bg-panel);color:var(--text);border:2px solid var(--accent2);margin-bottom:8px;';
     if(prov==='openrouter'){var o='<option value="">-- default model --</option>';ALL_MODELS.forEach(function(m){o+='<option value="'+m.id+'"'+(m.id===current?' selected':'')+'>'+m.name+'</option>'});return '<select class="agent-model-select" data-cat="'+cat+'" onchange="applyFreeFilter()">'+o+'</select>';}

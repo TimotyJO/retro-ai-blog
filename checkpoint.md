@@ -52,6 +52,9 @@ Proyek blog retro dengan pipeline AI multi-step (outline → draft → polish) d
 - [ ] Tambah notifikasi kalau pipeline gagal (email/webhook)
 - [ ] Gambar/thumbnail artikel (masih placeholder)
 - [x] **Optimasi meta description panjang** — validasi 150-160 karakter (SEO), strip HTML/markdown, prompt diperjelas
+- [x] **Gaya tulisan kreatif** — bold/italic, tokoh terkenal (dunia/Indonesia) + referensi temporal, minimal 1000 kata (validasi 950)
+- [x] **Favicon** — pixel-art CRT retro di `/favicon.ico`, link di semua halaman
+- [x] **Popunder ad** — interval 10 menit → 15 menit (homepage + artikel)
 - [ ] Rate limiting / anti-abuse di API generate
 
 ## Catatan teknis
