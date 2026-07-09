@@ -465,7 +465,7 @@ class ArticlePipeline {
           { role: 'system', content: systemPrompt || this.defaultSystem },
           { role: 'user', content: prompts[step] }
         ],
-        max_tokens: step === 'polish' ? 14000 : 4000,
+        max_tokens: step === 'polish' ? 17000 : 4000,
         temperature: 0.75
       })
     });
@@ -996,6 +996,7 @@ async function renderAdmin(env, headers) {
   </div>
   <div class="panel">
     <h2>► AGENT CONFIG</h2>
+    <label style="font-size:9px;color:var(--accent2);display:block;margin-bottom:10px;"><input type="checkbox" id="free-only" checked> ALL FREE (hanya model :free)</label>
     <div id="agent-forms"><p style="color:var(--text-dim);font-size:9px;">Loading agents...</p></div>
     <div id="agent-msg" style="font-size:9px;color:var(--accent2);margin-top:10px;"></div>
   </div>
@@ -1034,14 +1035,26 @@ async function renderAdmin(env, headers) {
   }
 
   var CATS = ['ai','marketing','freelance','coding','crypto'];
+  var ALL_MODELS = [];
   async function loadModels() {
     try { var r = await fetch('/api/models'); if (!r.ok) return []; return await r.json(); } catch(e){ return []; }
   }
   async function loadAgents() {
     try { var r = await fetch('/api/agents'); return await r.json(); } catch(e){ return {agents:[],topic_pools:{}}; }
   }
+  function applyFreeFilter() {
+    var freeOnly = document.getElementById('free-only').checked;
+    var models = freeOnly ? ALL_MODELS.filter(function(m){ return m.id.indexOf(':free') !== -1; }) : ALL_MODELS;
+    document.querySelectorAll('.agent-model').forEach(function(sel){
+      var cur = sel.value;
+      var opts = '<option value="">-- default model --</option>';
+      models.forEach(function(m){ opts += '<option value="' + m.id + '">' + m.name + '</option>'; });
+      sel.innerHTML = opts;
+      sel.value = cur;
+    });
+  }
   async function renderAgentConfig() {
-    var models = await loadModels();
+    ALL_MODELS = await loadModels();
     var agentsData = await loadAgents();
     var agents = {};
     (agentsData.agents || []).forEach(function(a){ agents[a.category] = a; });
@@ -1050,7 +1063,7 @@ async function renderAdmin(env, headers) {
     CATS.forEach(function(cat){
       var a = agents[cat] || {};
       var opts = '<option value="">-- default model --</option>';
-      models.forEach(function(m){ opts += '<option value="' + m.id + '"' + (a.model===m.id?' selected':'') + '>' + m.name + '</option>'; });
+      ALL_MODELS.forEach(function(m){ opts += '<option value="' + m.id + '"' + (a.model===m.id?' selected':'') + '>' + m.name + '</option>'; });
       var row = document.createElement('div');
       row.style.cssText = 'border:1px solid var(--border);padding:12px;margin-bottom:10px;background:var(--bg-dark);';
       row.innerHTML = '<div style="font-size:10px;color:var(--accent3);margin-bottom:8px;">' + cat.toUpperCase() + '</div>' +
@@ -1063,6 +1076,7 @@ async function renderAdmin(env, headers) {
     save.textContent = '► SAVE AGENTS';
     save.onclick = saveAgents;
     wrap.appendChild(save);
+    applyFreeFilter();
   }
   async function saveAgents() {
     var agents = [];
@@ -1084,6 +1098,7 @@ async function renderAdmin(env, headers) {
     document.getElementById('manual-msg').textContent = res.ok ? ('✔ ' + (payload.write_by_ai ? 'AI generate diproses' : 'Artikel dipublish')) : ('✗ ' + (data.error||'GAGAL'));
     if (res.ok) f.reset();
   });
+  document.getElementById('free-only').addEventListener('change', applyFreeFilter);
   renderAgentConfig();
 </script>
 </body>
