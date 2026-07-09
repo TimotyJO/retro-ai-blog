@@ -566,7 +566,7 @@ class ArticlePipeline {
   buildPrompt(step, topic, keywords, previousData) {
     const prompts = {
       outline: `Buat outline artikel dalam Bahasa Indonesia tentang "${topic}". Keywords: ${keywords && keywords.length ? keywords.join(', ') : 'tutorial, panduan'}. Output JSON: {"title": "...", "sections": [{"name": "...", "keyPoints": ["..."]}]}`,
-      draft: `Tulis artikel kreatif dalam Bahasa Indonesia tentang "${topic}". Outline: ${JSON.stringify(previousData)}. Panjang minimal 1000 kata. Gunakan **bold** untuk tekanan, *italic* untuk kutipan/ucapan orang. Selipkan nama tokoh terkenal (Steve Jobs, Elon Musk, dll) dengan referensi temporal seperti "5 tahun lalu", "pada 2023". Tone santai seperti ngobrol sama teman. Gunakan "kamu" bukan "Anda".`,
+      draft: `Tulis artikel kreatif dalam Bahasa Indonesia tentang "${topic}". Outline: ${JSON.stringify(previousData)}. Panjang minimal 1000 kata. Gunakan **bold** untuk tekanan, *italic* untuk kutipan/ucapan orang. Selipkan nama tokoh terkenal (dunia atau Indonesia) dengan referensi temporal seperti "5 tahun lalu", "pada 2023". Tone santai seperti ngobrol sama teman. Gunakan "kamu" bukan "Anda".`,
       polish: `Perbaiki artikel ini untuk SEO Indonesia. Pertahankan **bold** dan *italic* yang sudah ada di konten. metaDescription: 150-160 karakter, 1 kalimat ajakan, tanpa HTML/markdown, mengandung kata kunci utama. Output JSON: {"title": "...", "content": "...", "metaDescription": "...", "excerpt": "..."}. Artikel: ${typeof previousData === 'string' ? previousData.substring(0, 5000) : JSON.stringify(previousData)}`
     };
     return prompts[step];
@@ -975,7 +975,7 @@ async function renderHomepage(env, headers, url) {
       var s=document.createElement('script');
       s.src='https://pl30244763.effectivecpmnetwork.com/fb/f9/61/fbf96105e95070c88ecdab8a2e410dc4.js?cb='+Date.now();
       document.body.appendChild(s);
-    }, 600000);
+    }, 900000);
   </script>
 </body>
 </html>`;
@@ -1481,7 +1481,7 @@ async function renderArticle(env, headers, slug) {
       var s=document.createElement('script');
       s.src='https://pl30244763.effectivecpmnetwork.com/fb/f9/61/fbf96105e95070c88ecdab8a2e410dc4.js?cb='+Date.now();
       document.body.appendChild(s);
-    }, 600000);
+    }, 900000);
   </script>
   </body>
 </html>`;
