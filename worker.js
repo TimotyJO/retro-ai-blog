@@ -65,35 +65,177 @@ function getCookie(request, name) {
   return match ? decodeURIComponent(match.split('=').slice(1).join('=')) : null;
 }
 
+function isAdmin(request, env) {
+  return getCookie(request, 'admin_session') === env.ADMIN_SESSION;
+}
+
+async function sbGet(env, path) {
+  const res = await fetch(`${env.SUPABASE_URL}/rest/v1/${path}`, {
+    headers: { 'apikey': env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${env.SUPABASE_ANON_KEY}` }
+  });
+  return res.json();
+}
+
+async function getAgentConfig(env, category) {
+  try {
+    const rows = await sbGet(env, `agent_config?category=eq.${encodeURIComponent(category)}&limit=1`);
+    if (rows && rows[0]) return rows[0];
+  } catch (e) {}
+  return null;
+}
+
+async function getTopicPools(env) {
+  try {
+    const rows = await sbGet(env, `settings?key=eq.topic_pools&limit=1`);
+    if (rows && rows[0] && rows[0].value) return rows[0].value;
+  } catch (e) {}
+  return null;
+}
+
 // ============================================================
 // API HANDLERS
 // ============================================================
 
 async function handleAPI(request, env, url, headers) {
   headers['Content-Type'] = 'application/json';
+  const auth = request.headers.get('Authorization');
 
   // POST /api/generate - Trigger article generation (protected by CRON_SECRET)
   if (url.pathname === '/api/generate' && request.method === 'POST') {
-    const auth = request.headers.get('Authorization');
     if (!env.CRON_SECRET || auth !== `Bearer ${env.CRON_SECRET}`) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers });
     }
     let body = {};
     try { body = await request.json(); } catch (e) { body = {}; }
     const { topic, keywords, category } = body;
-    const topics = [
-      'Sejarah Evolusi Konsol Game 16-Bit',
-      'Mengapa Pixel Art Tetap Relevan di Era Modern',
-      'Kisah Lahirnya Soundtrack Chiptune',
-      'Perbandingan RPG Klasik vs RPG Modern',
-      'Filosofi Game Arcade Tahun 90an',
-      'Nostalgia Cartridge vs CD-ROM',
-      'Desain Level Game Retro yang Jenius',
-      'Budaya Gaming Anak 90an di Indonesia'
-    ];
-    const finalTopic = topic || topics[Math.floor(Math.random() * topics.length)];
+    const categories = ['ai', 'marketing', 'freelance', 'coding', 'crypto'];
+    const finalCategory = category || categories[Math.floor(Math.random() * categories.length)];
+    const pools = await getTopicPools(env);
+    const defaultPool = {
+      ai: ['Masa Depan AI Generatif di Indonesia', 'Cara Kerja LLM untuk Pemula', 'Etika AI: Antara Manfaat dan Risiko'],
+      marketing: ['Strategi Content Marketing ala 90an', 'Membangun Brand Personality', 'Psychology of Nostalgia dalam Iklan'],
+      freelance: ['Tips Negosiasi Rate Freelancer', 'Membangun Portfolio Menonjol', 'Manajemen Waktu ala Gamer'],
+      coding: ['Belajar Coding dari Nol', 'Debugging itu Seni', 'Clean Code untuk Pemula'],
+      crypto: ['Blockchain dalam Bahasa Sehari-hari', 'Manajemen Risiko Crypto', 'NFT dan Masa Depan Kepemilikan Digital']
+    };
+    const pool = (pools && pools[finalCategory] && pools[finalCategory].length) ? pools[finalCategory] : (defaultPool[finalCategory] || defaultPool.ai);
+    const finalTopic = topic || pool[Math.floor(Math.random() * pool.length)];
     const pipeline = new ArticlePipeline(env);
-    const result = await pipeline.generateArticle(finalTopic, keywords, category);
+    const result = await pipeline.generateArticle(finalTopic, keywords, finalCategory);
+    return new Response(JSON.stringify(result), { headers });
+  }
+
+  // GET /api/models - List OpenRouter models (admin or cron)
+  if (url.pathname === '/api/models' && request.method === 'GET') {
+    if (!isAdmin(request, env) && auth !== `Bearer ${env.CRON_SECRET}`) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers });
+    }
+    try {
+      const res = await fetch('https://openrouter.ai/api/v1/models', {
+        headers: { 'Authorization': `Bearer ${env.OPENROUTER_API_KEY}` }
+      });
+      const data = await res.json();
+      const models = (data.data || []).map(m => ({ id: m.id, name: m.name || m.id }));
+      return new Response(JSON.stringify(models), { headers });
+    } catch (e) {
+      return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
+    }
+  }
+
+  // GET /api/agents - Read agent config + topic pools (admin)
+  if (url.pathname === '/api/agents' && request.method === 'GET') {
+    if (!isAdmin(request, env)) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers });
+    const [agents, poolRows] = await Promise.all([
+      sbGet(env, 'agent_config?order=category'),
+      sbGet(env, 'settings?key=eq.topic_pools&limit=1')
+    ]);
+    const topic_pools = (poolRows && poolRows[0] && poolRows[0].value) ? poolRows[0].value : {};
+    return new Response(JSON.stringify({ agents: agents || [], topic_pools }), { headers });
+  }
+
+  // POST /api/agents - Save agent config + topic pools (admin)
+  if (url.pathname === '/api/agents' && request.method === 'POST') {
+    if (!isAdmin(request, env)) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers });
+    let body = {};
+    try { body = await request.json(); } catch (e) { body = {}; }
+    const agents = body.agents || [];
+    for (const a of agents) {
+      if (!a.category) continue;
+      await fetch(`${env.SUPABASE_URL}/rest/v1/agent_config?on_conflict=category`, {
+        method: 'POST',
+        headers: {
+          'apikey': env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${env.SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates'
+        },
+        body: JSON.stringify({ category: a.category, model: a.model || null, role_prompt: a.role_prompt || null })
+      });
+    }
+    if (body.topic_pools) {
+      await fetch(`${env.SUPABASE_URL}/rest/v1/settings?key=eq.topic_pools`, {
+        method: 'PATCH',
+        headers: {
+          'apikey': env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${env.SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json', 'Prefer': 'return=minimal'
+        },
+        body: JSON.stringify({ value: body.topic_pools })
+      });
+    }
+    return new Response(JSON.stringify({ success: true }), { headers });
+  }
+
+  // POST /api/manual - Manual article (admin). write_by_ai toggles AI generation.
+  if (url.pathname === '/api/manual' && request.method === 'POST') {
+    if (!isAdmin(request, env)) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers });
+    let body = {};
+    try { body = await request.json(); } catch (e) { body = {}; }
+    const { title, category, content, write_by_ai, topic, keywords } = body;
+    if (!title) return new Response(JSON.stringify({ error: 'Title required' }), { status: 400, headers });
+    const pipeline = new ArticlePipeline(env);
+    if (write_by_ai) {
+      const result = await pipeline.generateArticle(topic || title, keywords || [], category || 'general');
+      return new Response(JSON.stringify(result), { headers });
+    }
+    const article = {
+      title,
+      slug: pipeline.slugify(title),
+      content: content || '',
+      excerpt: (content || '').substring(0, 200) + ((content && content.length > 200) ? '...' : ''),
+      meta_description: `Artikel tentang ${title}`,
+      keywords: keywords || [],
+      category: category || 'general',
+      status: 'published',
+      word_count: (content || '').split(/\s+/).filter(Boolean).length,
+      ai_model: 'manual',
+      write_by_ai: false,
+      published_at: new Date().toISOString()
+    };
+    const res = await fetch(`${env.SUPABASE_URL}/rest/v1/articles`, {
+      method: 'POST',
+      headers: {
+        'apikey': env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${env.SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json', 'Prefer': 'return=representation'
+      },
+      body: JSON.stringify(article)
+    });
+    const data = await res.json();
+    return new Response(JSON.stringify({ success: true, articleId: data[0] && data[0].id }), { headers });
+  }
+
+  // POST /api/retry/:id - Re-run generation for a failed/needs_review queue item (admin)
+  if (url.pathname.match(/^\/api\/retry\/[\w-]+$/) && request.method === 'POST') {
+    if (!isAdmin(request, env)) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers });
+    const id = url.pathname.split('/').pop();
+    const rows = await sbGet(env, `article_queue?id=eq.${id}&limit=1`);
+    if (!rows || !rows[0]) return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers });
+    const item = rows[0];
+    const pipeline = new ArticlePipeline(env);
+    const result = await pipeline.generateArticle(item.topic, item.keywords || [], item.category);
+    if (result.success) {
+      await fetch(`${env.SUPABASE_URL}/rest/v1/article_queue?id=eq.${id}`, {
+        method: 'DELETE',
+        headers: { 'apikey': env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${env.SUPABASE_ANON_KEY}`, 'Prefer': 'return=minimal' }
+      });
+    }
     return new Response(JSON.stringify(result), { headers });
   }
 
@@ -163,16 +305,26 @@ async function handleAPI(request, env, url, headers) {
 class ArticlePipeline {
   constructor(env) {
     this.env = env;
-    this.models = [
+    this.fallbackModels = [
       'deepseek/deepseek-chat-v3-0324:free',
       'meta-llama/llama-4-maverick:free',
       'mistralai/mistral-small-3.1-24b-instruct:free'
     ];
+    this.models = [...this.fallbackModels];
+    this.defaultSystem = 'Kamu adalah penulis artikel profesional Indonesia. Hindari pengulangan. Gunakan contoh konkret. Tulis dengan gaya retro 16-bit yang menghibur namun informatif.';
+    this.systemPrompt = this.defaultSystem;
     this.maxRetries = 3;
   }
 
   async generateArticle(topic, keywords, category) {
     const queueId = await this.createQueue(topic, keywords, category);
+
+    // Load per-category agent config (model + role prompt)
+    const cfg = category ? await getAgentConfig(this.env, category) : null;
+    if (cfg && cfg.model) {
+      this.models = [cfg.model, ...this.fallbackModels.filter(m => m !== cfg.model)];
+    }
+    this.systemPrompt = (cfg && cfg.role_prompt) ? cfg.role_prompt : this.defaultSystem;
 
     // STEP 1: Outline (MUST PASS)
     const step1 = await this.runStep(queueId, 1, 'outline', topic, keywords, null);
@@ -214,7 +366,7 @@ class ArticlePipeline {
         });
 
         const model = this.models[0];
-        const data = await this.callOpenRouter(stepName, topic, keywords, model, previousData);
+        const data = await this.callOpenRouter(stepName, topic, keywords, model, previousData, this.systemPrompt);
 
         const validation = this.validate(stepName, data);
         if (validation.valid) {
@@ -237,7 +389,7 @@ class ArticlePipeline {
     // Fallback models
     for (let i = 1; i < this.models.length; i++) {
       try {
-        const data = await this.callOpenRouter(stepName, topic, keywords, this.models[i], previousData);
+        const data = await this.callOpenRouter(stepName, topic, keywords, this.models[i], previousData, this.systemPrompt);
         const validation = this.validate(stepName, data);
         if (validation.valid) {
           await this.updateQueue(queueId, {
@@ -292,7 +444,7 @@ class ArticlePipeline {
     return validators[stepName](data);
   }
 
-  async callOpenRouter(step, topic, keywords, model, previousData) {
+  async callOpenRouter(step, topic, keywords, model, previousData, systemPrompt) {
     const prompts = {
       outline: `Buat outline artikel dalam Bahasa Indonesia tentang "${topic}". Keywords: ${keywords?.join(', ') || 'tutorial, panduan'}. Output JSON: {"title": "...", "sections": [{"name": "...", "keyPoints": ["..."]}]}`,
       draft: `Tulis artikel lengkap dalam Bahasa Indonesia tentang "${topic}". Outline: ${JSON.stringify(previousData)}. Panjang 800-1000 kata. Tone: santai seperti ngobrol sama teman. Gunakan "kamu" bukan "Anda".`,
@@ -310,7 +462,7 @@ class ArticlePipeline {
       body: JSON.stringify({
         model: model,
         messages: [
-          { role: 'system', content: 'Kamu adalah penulis artikel profesional Indonesia. Hindari pengulangan. Gunakan contoh konkret.' },
+          { role: 'system', content: systemPrompt || this.defaultSystem },
           { role: 'user', content: prompts[step] }
         ],
         max_tokens: step === 'polish' ? 14000 : 4000,
@@ -842,6 +994,24 @@ async function renderAdmin(env, headers) {
       `;
     }).join('')}
   </div>
+  <div class="panel">
+    <h2>► AGENT CONFIG</h2>
+    <div id="agent-forms"><p style="color:var(--text-dim);font-size:9px;">Loading agents...</p></div>
+    <div id="agent-msg" style="font-size:9px;color:var(--accent2);margin-top:10px;"></div>
+  </div>
+  <div class="panel">
+    <h2>► MANUAL WRITE</h2>
+    <form id="manual-form" style="display:flex;flex-direction:column;gap:10px;">
+      <input name="title" placeholder="JUDUL ARTIKEL" style="font-family:inherit;font-size:10px;padding:10px;background:var(--bg-dark);color:var(--text);border:2px solid var(--accent2);">
+      <select name="category" style="font-family:inherit;font-size:10px;padding:10px;background:var(--bg-dark);color:var(--text);border:2px solid var(--accent2);">
+        <option value="ai">AI</option><option value="marketing">MARKETING</option><option value="freelance">FREELANCE</option><option value="coding">CODING</option><option value="crypto">CRYPTO</option>
+      </select>
+      <label style="font-size:9px;color:var(--accent2);"><input type="checkbox" name="write_by_ai" checked> WRITE BY AI (generate otomatis)</label>
+      <textarea name="content" placeholder="KONTEN (kosongkan jika WRITE BY AI aktif)" rows="8" style="font-family:inherit;font-size:10px;padding:10px;background:var(--bg-dark);color:var(--text);border:2px solid var(--accent2);"></textarea>
+      <button type="submit" class="btn btn-approve" style="align-self:flex-start;">► PUBLISH</button>
+    </form>
+    <div id="manual-msg" style="font-size:9px;color:var(--accent3);margin-top:10px;"></div>
+  </div>
 </main>
 <footer class="footer">
   <p>RETRO AI BLOG ADMIN • Sequential Pipeline Control</p>
@@ -862,6 +1032,59 @@ async function renderAdmin(env, headers) {
       location.reload();
     }
   }
+
+  var CATS = ['ai','marketing','freelance','coding','crypto'];
+  async function loadModels() {
+    try { var r = await fetch('/api/models'); if (!r.ok) return []; return await r.json(); } catch(e){ return []; }
+  }
+  async function loadAgents() {
+    try { var r = await fetch('/api/agents'); return await r.json(); } catch(e){ return {agents:[],topic_pools:{}}; }
+  }
+  async function renderAgentConfig() {
+    var models = await loadModels();
+    var agentsData = await loadAgents();
+    var agents = {};
+    (agentsData.agents || []).forEach(function(a){ agents[a.category] = a; });
+    var wrap = document.getElementById('agent-forms');
+    wrap.innerHTML = '';
+    CATS.forEach(function(cat){
+      var a = agents[cat] || {};
+      var opts = '<option value="">-- default model --</option>';
+      models.forEach(function(m){ opts += '<option value="' + m.id + '"' + (a.model===m.id?' selected':'') + '>' + m.name + '</option>'; });
+      var row = document.createElement('div');
+      row.style.cssText = 'border:1px solid var(--border);padding:12px;margin-bottom:10px;background:var(--bg-dark);';
+      row.innerHTML = '<div style="font-size:10px;color:var(--accent3);margin-bottom:8px;">' + cat.toUpperCase() + '</div>' +
+        '<select data-cat="' + cat + '" class="agent-model" style="font-family:inherit;font-size:9px;padding:8px;width:100%;background:var(--bg-panel);color:var(--text);border:2px solid var(--accent2);margin-bottom:8px;">' + opts + '</select>' +
+        '<textarea data-cat="' + cat + '" class="agent-role" rows="3" placeholder="Role / persona untuk kategori ini..." style="font-family:inherit;font-size:9px;padding:8px;width:100%;background:var(--bg-panel);color:var(--text);border:2px solid var(--accent2);">' + (a.role_prompt||'') + '</textarea>';
+      wrap.appendChild(row);
+    });
+    var save = document.createElement('button');
+    save.className = 'btn btn-approve';
+    save.textContent = '► SAVE AGENTS';
+    save.onclick = saveAgents;
+    wrap.appendChild(save);
+  }
+  async function saveAgents() {
+    var agents = [];
+    document.querySelectorAll('.agent-model').forEach(function(sel){
+      var cat = sel.dataset.cat;
+      var role = document.querySelector('.agent-role[data-cat="' + cat + '"]').value;
+      agents.push({ category: cat, model: sel.value || null, role_prompt: role || null });
+    });
+    var res = await fetch('/api/agents', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ agents: agents }) });
+    document.getElementById('agent-msg').textContent = res.ok ? '✔ TERSIMPAN' : '✗ GAGAL';
+  }
+  var mf = document.getElementById('manual-form');
+  mf.addEventListener('submit', async function(e){
+    e.preventDefault();
+    var f = e.target;
+    var payload = { title: f.title.value, category: f.category.value, content: f.content.value, write_by_ai: f.write_by_ai.checked };
+    var res = await fetch('/api/manual', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    var data = await res.json();
+    document.getElementById('manual-msg').textContent = res.ok ? ('✔ ' + (payload.write_by_ai ? 'AI generate diproses' : 'Artikel dipublish')) : ('✗ ' + (data.error||'GAGAL'));
+    if (res.ok) f.reset();
+  });
+  renderAgentConfig();
 </script>
 </body>
 </html>`;
