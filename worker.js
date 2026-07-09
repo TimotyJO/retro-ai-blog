@@ -32,6 +32,15 @@ export default {
     if (url.pathname === '/robots.txt') {
       return await renderRobots(env, headers);
     }
+    if (url.pathname === '/googleda99782c94638a72.html') {
+      return new Response('google-site-verification: googleda99782c94638a72.html', { headers: { 'Content-Type': 'text/html' } });
+    }
+    if (url.pathname === '/tentang') {
+      return await renderAbout(env, headers);
+    }
+    if (url.pathname === '/docs') {
+      return await renderDocs(env, headers);
+    }
     if (url.pathname === '/admin' || url.pathname === '/rahasia-admin') {
       if (url.searchParams.get('logout')) {
         const cookie = `admin_session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
@@ -355,6 +364,34 @@ async function handleAPI(request, env, url, headers) {
     return new Response(JSON.stringify({ success: true }), { headers });
   }
 
+  // DELETE /api/articles/:id - Delete published article
+  if (url.pathname.match(/^\/api\/articles\/[\w-]+$/) && request.method === 'DELETE') {
+    if (getCookie(request, 'admin_session') !== env.ADMIN_SESSION) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers });
+    const id = url.pathname.split('/').pop();
+    await fetch(`${env.SUPABASE_URL}/rest/v1/articles?id=eq.${id}`, {
+      method: 'DELETE',
+      headers: { 'apikey': env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${env.SUPABASE_ANON_KEY}`, 'Prefer': 'return=minimal' }
+    });
+    return new Response(JSON.stringify({ success: true }), { headers });
+  }
+
+  // PATCH /api/articles/:id - Edit published article
+  if (url.pathname.match(/^\/api\/articles\/[\w-]+$/) && request.method === 'PATCH') {
+    if (getCookie(request, 'admin_session') !== env.ADMIN_SESSION) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers });
+    const id = url.pathname.split('/').pop();
+    let body = {};
+    try { body = await request.json(); } catch (e) {}
+    const allowed = {};
+    ['title','content','category','meta_description','keywords','slug','status'].forEach(k => { if (k in body) allowed[k] = body[k]; });
+    if (Object.keys(allowed).length === 0) return new Response(JSON.stringify({ error: 'No fields' }), { status: 400, headers });
+    await fetch(`${env.SUPABASE_URL}/rest/v1/articles?id=eq.${id}`, {
+      method: 'PATCH',
+      headers: { 'apikey': env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${env.SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+      body: JSON.stringify(allowed)
+    });
+    return new Response(JSON.stringify({ success: true }), { headers });
+  }
+
   return new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers });
 }
 
@@ -668,27 +705,29 @@ class ArticlePipeline {
 
 async function renderHomepage(env, headers, url) {
   const cat = url && url.searchParams.get('cat');
+  const q = url && url.searchParams.get('q');
+  const page = parseInt((url && url.searchParams.get('page')) || '1') || 1;
   const validCats = ['ai','marketing','freelance','coding','crypto'];
   const activeCat = (cat && validCats.includes(cat)) ? cat : null;
-  const q = activeCat
-    ? `${env.SUPABASE_URL}/rest/v1/articles?status=eq.published&category=eq.${encodeURIComponent(activeCat)}&order=published_at.desc&limit=13`
-    : `${env.SUPABASE_URL}/rest/v1/articles?status=eq.published&order=published_at.desc&limit=13`;
-  const response = await fetch(q, {
+  const limit = 12;
+  const offset = (page - 1) * limit;
+  let apiUrl = `${env.SUPABASE_URL}/rest/v1/articles?status=eq.published&order=published_at.desc&limit=${limit}&offset=${offset}`;
+  if (activeCat) apiUrl += `&category=eq.${encodeURIComponent(activeCat)}`;
+  if (q) apiUrl += `&or=(title.ilike.*${encodeURIComponent(q)}*,content.ilike.*${encodeURIComponent(q)}*)`;
+  const response = await fetch(apiUrl, {
     headers: { 'apikey': env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${env.SUPABASE_ANON_KEY}` }
   });
   const articles = await response.json();
-  const featured = articles[0];
-  const grid = articles.slice(1);
-  function fmtDate(d){ try { return new Date(d).toLocaleDateString('id-ID',{day:'numeric',month:'long',year:'numeric'}); } catch(e){ return ''; } }
-  function readMins(wc){ return Math.max(1, Math.round((wc||0)/200)); }
-  function excerptOf(md, n){ const t = stripMd(md||''); return t.length > n ? t.slice(0,n).trim() + '…' : t; }
-  const cats = [{k:'ai',label:'AI',icon:'🤖'},{k:'marketing',label:'Marketing',icon:'📈'},{k:'freelance',label:'Freelance',icon:'💼'},{k:'coding',label:'Coding',icon:'💻'},{k:'crypto',label:'Crypto',icon:'₿'}];
-  const navLinks = [{k:'',label:'Beranda',icon:'🏠'}].concat(cats);
-  const navHtml = navLinks.map(c => {
-    const href = c.k ? `/?cat=${c.k}` : '/';
-    const active = (c.k === activeCat) ? ' active' : '';
-    return `<a href="${href}" class="nav-link${active}">${c.icon} ${c.label}</a>`;
-  }).join('');
+  const featured = (!activeCat && !q && page === 1 && articles[0]) ? articles[0] : null;
+  const gridArticles = featured ? articles.slice(1) : articles;
+  const qs = (p) => {
+    const parts = [];
+    if (activeCat) parts.push('cat=' + encodeURIComponent(activeCat));
+    if (q) parts.push('q=' + encodeURIComponent(q));
+    parts.push('page=' + p);
+    return parts.join('&');
+  };
+  const hasNext = articles.length === limit;
 
   const html = `<!DOCTYPE html>
 <html lang="id">
@@ -697,147 +736,216 @@ async function renderHomepage(env, headers, url) {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PromptLab Studio</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap');
-  :root {
-    --bg:#0b0e1f; --bg-soft:#141833; --panel:#171c3a; --panel-2:#1f2547;
-    --text:#e9ebf7; --muted:#9aa1c4; --primary:#8b93ff; --primary-soft:rgba(139,147,255,0.14);
-    --secondary:#46d6c4; --border:rgba(255,255,255,0.08); --shadow:0 18px 50px rgba(0,0,0,0.40);
-  }
+  @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap');
+  :root { --bg-dark:#080814; --bg-panel:#141430; --accent:#ff3864; --accent2:#21e6c1; --accent3:#ffd23f; --accent4:#b15cff; --text:#ececff; --text-dim:#7a7aa8; --border:#2a2a52; }
   * { box-sizing:border-box; margin:0; padding:0; }
-  html { scroll-behavior:smooth; }
-  body { font-family:'Plus Jakarta Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif; background:radial-gradient(1200px 700px at 50% -15%, #1a1f4d 0%, var(--bg) 60%); background-attachment:fixed; color:var(--text); line-height:1.7; font-size:16px; -webkit-font-smoothing:antialiased; min-height:100vh; }
-  body::before { content:''; position:fixed; inset:0; z-index:0; pointer-events:none; background:radial-gradient(600px 320px at 85% 8%, rgba(139,147,255,0.10), transparent 60%),radial-gradient(520px 300px at 12% 88%, rgba(70,214,196,0.08), transparent 60%); }
+  body { font-family:'Press Start 2P',monospace; background:var(--bg-dark); color:var(--text); line-height:1.8; font-size:10px; overflow-x:hidden; image-rendering:pixelated; }
+  body::before { content:''; position:fixed; inset:0; z-index:0; pointer-events:none; background-image:linear-gradient(rgba(33,230,193,0.04) 1px,transparent 1px),linear-gradient(90deg,rgba(33,230,193,0.04) 1px,transparent 1px); background-size:28px 28px; }
+  body::after { content:''; position:fixed; inset:0; z-index:9999; pointer-events:none; background:repeating-linear-gradient(0deg,rgba(0,0,0,0.18),rgba(0,0,0,0.18) 1px,transparent 1px,transparent 3px); animation:scanline-flicker 0.13s infinite; }
+  @keyframes scanline-flicker { 0%{opacity:0.96} 50%{opacity:0.93} 100%{opacity:0.96} }
+  .glow { position:fixed; inset:0; z-index:0; pointer-events:none; background:radial-gradient(700px 380px at 78% 12%, rgba(255,56,100,0.13), transparent 60%),radial-gradient(550px 300px at 22% 82%, rgba(33,230,193,0.13), transparent 60%); }
 
-  .header { position:sticky; top:0; z-index:20; background:rgba(11,14,31,0.72); backdrop-filter:blur(12px); border-bottom:1px solid var(--border); padding:15px 22px; }
-  .header-inner { max-width:1080px; margin:0 auto; display:flex; align-items:center; justify-content:space-between; gap:16px; }
-  .logo { font-family:'Space Grotesk',sans-serif; font-size:21px; font-weight:700; letter-spacing:0.4px; display:flex; align-items:center; gap:10px; background:linear-gradient(90deg,var(--primary),var(--secondary)); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
-  .tagline { font-size:13px; color:var(--muted); }
+  .fx { position:fixed; inset:0; z-index:1; pointer-events:none; overflow:hidden; }
+  .pix { position:absolute; bottom:-12px; width:6px; height:6px; opacity:0.8; image-rendering:pixelated; animation:float-up linear infinite; }
+  .pix:nth-child(1){ left:4%; background:var(--accent); animation-duration:11s; animation-delay:0s; }
+  .pix:nth-child(2){ left:12%; background:var(--accent3); animation-duration:9s; animation-delay:2s; }
+  .pix:nth-child(3){ left:21%; background:var(--accent2); animation-duration:13s; animation-delay:1s; }
+  .pix:nth-child(4){ left:31%; background:var(--accent4); animation-duration:10s; animation-delay:3s; }
+  .pix:nth-child(5){ left:42%; background:var(--accent); animation-duration:12s; animation-delay:0.5s; }
+  .pix:nth-child(6){ left:53%; background:var(--accent3); animation-duration:8s; animation-delay:4s; }
+  .pix:nth-child(7){ left:63%; background:var(--accent2); animation-duration:14s; animation-delay:1.5s; }
+  .pix:nth-child(8){ left:72%; background:var(--accent4); animation-duration:9.5s; animation-delay:2.5s; }
+  .pix:nth-child(9){ left:81%; background:var(--accent); animation-duration:11.5s; animation-delay:0.8s; }
+  .pix:nth-child(10){ left:89%; background:var(--accent3); animation-duration:10.5s; animation-delay:3.5s; }
+  .pix:nth-child(11){ left:95%; background:var(--accent2); animation-duration:12.5s; animation-delay:1.2s; }
+  .pix:nth-child(12){ left:17%; background:var(--accent4); animation-duration:13.5s; animation-delay:5s; }
+  @keyframes float-up { 0%{ transform:translateY(0) } 100%{ transform:translateY(-110vh) } }
 
-  .nav { max-width:1080px; margin:18px auto 0; display:flex; gap:10px; flex-wrap:wrap; padding:0 22px; }
-  .nav-link { color:var(--muted); text-decoration:none; padding:9px 16px; border:1px solid var(--border); border-radius:999px; font-size:14px; font-weight:500; transition:all 0.18s; background:rgba(255,255,255,0.02); }
-  .nav-link:hover { color:#fff; border-color:var(--primary); transform:translateY(-1px); }
-  .nav-link.active { background:linear-gradient(90deg,var(--primary),#7b83f0); color:#0b0e1f; border-color:transparent; font-weight:600; box-shadow:0 8px 20px rgba(139,147,255,0.35); }
+  .header { background:var(--bg-panel); border-bottom:4px solid var(--accent); padding:18px 20px; text-align:center; position:relative; z-index:2; }
+  .header .hud { display:flex; justify-content:space-between; font-size:8px; color:var(--accent2); margin-bottom:12px; }
+  .logo { font-size:34px; color:var(--accent3); text-shadow:3px 3px 0 var(--accent),0 0 16px rgba(255,210,63,0.55); margin-bottom:10px; position:relative; letter-spacing:1px; }
+  .chip { display:inline-block; background:var(--accent4); color:var(--bg-dark); padding:4px 10px; margin-right:12px; border:2px solid var(--accent3); box-shadow:3px 3px 0 var(--accent); font-size:20px; vertical-align:middle; }
+  .caret { display:inline-block; color:var(--accent3); animation:blink 1s steps(1) infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+  .tagline { font-size:10px; color:var(--accent2); text-shadow:0 0 8px rgba(33,230,193,0.4); }
 
-  .main { max-width:1080px; margin:0 auto; padding:30px 22px 60px; position:relative; z-index:1; }
-  .section-title { font-family:'Space Grotesk',sans-serif; font-size:14px; font-weight:600; color:var(--muted); letter-spacing:1px; text-transform:uppercase; margin:30px 4px 16px; display:flex; align-items:center; gap:10px; }
-  .section-title::before { content:''; width:18px; height:2px; background:var(--secondary); border-radius:2px; }
+  .nav { background:var(--bg-panel); padding:14px; border-bottom:2px solid var(--border); display:flex; justify-content:center; gap:14px; flex-wrap:wrap; position:relative; z-index:2; }
+  .nav a { color:var(--text); text-decoration:none; padding:9px 14px; border:2px solid var(--border); background:var(--bg-dark); transition:all 0.12s; font-size:10px; box-shadow:3px 3px 0 rgba(0,0,0,0.5); }
+  .nav a:hover { background:var(--accent); color:var(--bg-dark); border-color:var(--accent3); transform:translateY(-2px); box-shadow:4px 6px 0 var(--accent3); }
+  .nav a.active { background:var(--accent); color:var(--bg-dark); border-color:var(--accent3); box-shadow:4px 6px 0 var(--accent3); }
+  .cat-banner { background:var(--bg-panel); border:3px solid var(--accent3); padding:16px 20px; margin-bottom:24px; color:var(--accent3); font-size:12px; text-shadow:1px 1px 0 var(--accent); box-shadow:4px 4px 0 rgba(0,0,0,0.5); }
+  .empty { text-align:center; padding:40px 16px; color:var(--text-dim); font-size:11px; border:3px dashed var(--border); margin-top:10px; }
 
-  .featured { display:block; text-decoration:none; color:inherit; background:linear-gradient(135deg,var(--panel-2),var(--panel)); border:1px solid var(--border); border-radius:24px; padding:38px 36px; margin-bottom:14px; box-shadow:var(--shadow); position:relative; overflow:hidden; transition:transform 0.2s, box-shadow 0.2s, border-color 0.2s; }
-  .featured::after { content:''; position:absolute; right:-60px; top:-60px; width:240px; height:240px; background:radial-gradient(circle, rgba(139,147,255,0.18), transparent 70%); pointer-events:none; }
-  .featured:hover { transform:translateY(-4px); border-color:rgba(139,147,255,0.5); box-shadow:0 26px 60px rgba(0,0,0,0.5); }
-  .featured .pill { margin-bottom:14px; }
-  .featured h2 { font-family:'Space Grotesk',sans-serif; font-size:30px; line-height:1.25; color:#fff; margin-bottom:14px; font-weight:700; max-width:760px; }
-  .featured .excerpt { font-size:17px; color:var(--muted); line-height:1.65; max-width:720px; margin-bottom:18px; }
-  .featured .meta { display:flex; gap:16px; flex-wrap:wrap; font-size:13px; color:var(--muted); margin-bottom:16px; }
-  .read-btn { display:inline-block; color:var(--secondary); font-weight:600; font-size:14px; transition:gap 0.2s; }
+  .main { max-width:920px; margin:0 auto; padding:24px; position:relative; z-index:2; }
+  .hero { background:var(--bg-panel); border:4px solid var(--accent2); padding:32px; margin-bottom:30px; position:relative; box-shadow:6px 6px 0 rgba(0,0,0,0.5), 0 0 22px rgba(33,230,193,0.18); }
+  .hero::before { content:'▶ SYSTEM READY'; position:absolute; top:-12px; left:20px; background:var(--accent2); color:var(--bg-dark); padding:4px 10px; font-size:8px; font-family:'Press Start 2P'; }
+  .hero h1 { font-size:17px; color:var(--accent3); margin-bottom:16px; line-height:1.6; text-shadow:2px 2px 0 var(--accent); }
+  .hero p { font-family:'VT323',monospace; font-size:20px; color:var(--text-dim); line-height:1.4; }
+  .press-start { display:inline-block; margin-top:14px; font-size:11px; color:var(--accent); animation:pulse 1s steps(2) infinite; }
+  @keyframes pulse { 0%,100%{ opacity:1 } 50%{ opacity:0.15 } }
 
-  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:20px; }
-  .card { background:var(--panel); border:1px solid var(--border); border-radius:20px; padding:24px; box-shadow:var(--shadow); transition:transform 0.18s, box-shadow 0.18s, border-color 0.18s; }
-  .card:hover { transform:translateY(-5px); border-color:rgba(139,147,255,0.5); box-shadow:0 22px 50px rgba(0,0,0,0.5); }
-  .card-link { text-decoration:none; color:inherit; display:block; }
-  .card .pill { margin-bottom:12px; }
-  .card h3 { font-family:'Space Grotesk',sans-serif; font-size:19px; font-weight:600; color:#fff; margin-bottom:12px; line-height:1.4; min-height:52px; }
-  .card .excerpt { font-size:14px; color:var(--muted); line-height:1.6; margin-bottom:14px; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
-  .card .meta { display:flex; gap:12px; flex-wrap:wrap; font-size:12px; color:var(--muted); }
+  .stats { display:flex; gap:18px; margin-bottom:30px; flex-wrap:wrap; }
+  .stat-box { background:var(--bg-panel); border:3px solid var(--accent2); padding:16px; flex:1; text-align:center; min-width:120px; box-shadow:4px 4px 0 rgba(0,0,0,0.5); }
+  .stat-box .label { font-size:8px; color:var(--accent2); margin-bottom:10px; }
+  .stat-box .value { font-size:22px; color:var(--accent3); text-shadow:2px 2px 0 var(--accent); }
 
-  .pill { display:inline-block; background:var(--primary-soft); color:var(--primary); padding:5px 12px; border-radius:999px; font-weight:600; font-size:12px; letter-spacing:0.3px; }
-  .pill.small { font-size:11px; padding:4px 10px; }
+  .article-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(290px,1fr)); gap:22px; }
+  .article-card { background:var(--bg-panel); border:3px solid var(--border); padding:22px; position:relative; transition:transform 0.18s, border-color 0.18s, box-shadow 0.18s; overflow:hidden; box-shadow:5px 5px 0 rgba(0,0,0,0.5); display:flex; flex-direction:column; }
+  .article-card::after { content:''; position:absolute; top:0; left:0; right:0; height:5px; background:linear-gradient(90deg,var(--accent),var(--accent2)); opacity:0.9; }
+  .article-card:hover { transform:translateY(-5px); border-color:var(--accent2); box-shadow:7px 7px 0 rgba(33,230,193,0.45); }
+  .article-card .category { display:inline-block; font-size:8px; color:var(--accent2); margin-bottom:12px; text-transform:uppercase; letter-spacing:1px; border:2px solid var(--accent2); padding:3px 8px; align-self:flex-start; }
+  .article-card h3 { font-size:13px; color:var(--text); margin-bottom:14px; line-height:1.6; flex:1; }
+  .article-card h3 a { color:var(--text); text-decoration:none; }
+  .article-card h3 a:hover { color:var(--accent3); }
+  .article-card .meta { font-family:'VT323',monospace; font-size:18px; color:var(--text-dim); display:flex; justify-content:space-between; gap:8px; }
+  .article-card .read { margin-top:14px; font-size:9px; color:var(--accent); display:flex; align-items:center; gap:6px; transition:gap 0.15s, color 0.15s; }
+  .article-card:hover .read { gap:12px; color:var(--accent2); }
 
-  .empty { color:var(--muted); text-align:center; padding:60px 20px; font-size:15px; }
+  .marquee { overflow:hidden; white-space:nowrap; position:relative; background:var(--bg-dark); padding:12px; border:3px solid var(--border); margin-top:30px; box-shadow:4px 4px 0 rgba(0,0,0,0.5); }
+  .marquee span { display:inline-block; animation:marquee-scroll 12s linear infinite; padding-left:100%; font-size:10px; color:var(--accent3); }
+  @keyframes marquee-scroll { 0%{transform:translateX(0)} 100%{transform:translateX(-100%)} }
 
-  .footer { margin-top:50px; border-top:1px solid var(--border); background:rgba(11,14,31,0.6); backdrop-filter:blur(10px); }
-  .footer-inner { max-width:1080px; margin:0 auto; padding:42px 22px; display:grid; grid-template-columns:1.5fr 1fr 1fr; gap:30px; }
-  .footer .logo { font-size:18px; margin-bottom:12px; }
-  .footer p { color:var(--muted); font-size:14px; line-height:1.65; }
-  .footer h4 { font-family:'Space Grotesk',sans-serif; font-size:13px; text-transform:uppercase; letter-spacing:1px; color:var(--text); margin-bottom:14px; }
-  .footer ul { list-style:none; }
-  .footer li { margin-bottom:9px; }
-  .footer a { color:var(--muted); text-decoration:none; font-size:14px; transition:color 0.15s; }
-  .footer a:hover { color:var(--secondary); }
-  .footer-bottom { border-top:1px solid var(--border); text-align:center; padding:18px; color:var(--muted); font-size:13px; }
-  @media(max-width:760px){
-    .footer-inner{ grid-template-columns:1fr; }
-    .featured h2{ font-size:24px; }
-    .header-inner{ flex-direction:column; align-items:flex-start; }
-    .tagline{ display:none; }
-  }
+  .footer { background:var(--bg-panel); border-top:4px solid var(--accent); padding:22px; text-align:center; font-size:8px; color:var(--text-dim); margin-top:34px; position:relative; z-index:2; }
+  .pixel-art { font-size:22px; margin-bottom:12px; filter:drop-shadow(0 0 6px rgba(177,92,255,0.5)); }
+  .cursor-blink::after { content:'▋'; animation:blink 1s infinite; color:var(--accent3); }
+  @keyframes blink { 0%,50%{opacity:1} 51%,100%{opacity:0} }
+  .rainbow-text { background:linear-gradient(90deg,var(--accent),var(--accent2),var(--accent3),var(--accent4),var(--accent)); background-size:300% 100%; -webkit-background-clip:text; -webkit-text-fill-color:transparent; animation:rainbow-shift 3s ease infinite; }
+  @keyframes rainbow-shift { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
+  .search { display:flex; gap:10px; margin:24px 0; flex-wrap:wrap; }
+  .search input[type=text] { flex:1; min-width:200px; font-family:'VT323',monospace; font-size:18px; padding:12px 14px; background:var(--bg-dark); color:var(--text); border:3px solid var(--accent2); }
+  .search button { font-family:'Press Start 2P',monospace; font-size:9px; padding:12px 18px; background:var(--accent); color:var(--bg-dark); border:3px solid var(--accent3); cursor:pointer; }
+  .featured { display:block; text-decoration:none; background:var(--bg-panel); border:4px solid var(--accent3); padding:28px; margin-bottom:28px; box-shadow:6px 6px 0 rgba(0,0,0,0.5), 0 0 22px rgba(255,210,63,0.18); transition:transform 0.15s, box-shadow 0.15s; }
+  .featured:hover { transform:translateY(-4px); box-shadow:8px 8px 0 var(--accent3); }
+  .featured .tag { font-size:8px; color:var(--accent3); text-transform:uppercase; letter-spacing:1px; margin-bottom:12px; }
+  .featured h2 { font-size:20px; color:var(--text); margin-bottom:14px; line-height:1.5; text-shadow:1px 1px 0 rgba(0,0,0,0.5); }
+  .featured .meta { display:flex; gap:16px; flex-wrap:wrap; font-family:'VT323',monospace; font-size:18px; color:var(--text-dim); }
+  .featured .read { margin-top:14px; font-size:10px; color:var(--accent2); display:inline-block; }
+  .pager { display:flex; justify-content:center; gap:14px; margin:26px 0; flex-wrap:wrap; }
+  .pager a { font-family:'Press Start 2P',monospace; font-size:9px; padding:10px 14px; border:3px solid var(--accent2); background:var(--bg-dark); color:var(--text); text-decoration:none; box-shadow:3px 3px 0 rgba(0,0,0,0.5); }
+  .pager a:hover { background:var(--accent); color:var(--bg-dark); border-color:var(--accent3); }
+  .footer a { color:var(--accent2); text-decoration:none; }
+  .footer a:hover { color:var(--accent3); }
+  .footer .flinks { display:flex; justify-content:center; gap:16px; flex-wrap:wrap; font-size:9px; margin:10px 0; }
+  .footer .copy { margin-top:8px; }
+  @media(max-width:600px){ .article-grid{grid-template-columns:1fr} .logo{font-size:16px} .stats{flex-direction:column} .header .hud{font-size:7px} .search{flex-direction:column} .search button{padding:12px} }
 </style>
 </head>
 <body>
+<div class="fx">
+  <span class="pix"></span><span class="pix"></span><span class="pix"></span><span class="pix"></span>
+  <span class="pix"></span><span class="pix"></span><span class="pix"></span><span class="pix"></span>
+  <span class="pix"></span><span class="pix"></span><span class="pix"></span><span class="pix"></span>
+</div>
 <header class="header">
-  <div class="header-inner">
-    <div class="logo"><span>🧪</span> PromptLab Studio</div>
-    <div class="tagline">Ditulis otomatis oleh AI Agent • artikel segar setiap hari</div>
-  </div>
+  <div class="hud"><span>1UP</span><span>HI-SCORE 999999</span><span>CREDIT 99</span></div>
+  <div class="logo"><span class="chip">🧪</span><span id="type-text"></span><span class="caret">▋</span></div>
+  <div class="tagline">◀ Articles generated by • AI Agent Autonomous ▶</div>
 </header>
 <nav class="nav">
-  ${navHtml}
+  <a href="/" class="nav-link ${!activeCat?'active':''}">🏠 HOME</a>
+  <a href="/?cat=ai" class="nav-link ${activeCat==='ai'?'active':''}">🤖 AI</a>
+  <a href="/?cat=marketing" class="nav-link ${activeCat==='marketing'?'active':''}">📢 MARKETING</a>
+  <a href="/?cat=freelance" class="nav-link ${activeCat==='freelance'?'active':''}">💼 FREELANCE</a>
+  <a href="/?cat=coding" class="nav-link ${activeCat==='coding'?'active':''}">💻 CODING</a>
+  <a href="/?cat=crypto" class="nav-link ${activeCat==='crypto'?'active':''}">₿ CRYPTO</a>
+  <a href="/tentang" class="nav-link">📖 TENTANG</a>
+  <a href="/docs" class="nav-link">📚 DOCS</a>
 </nav>
 <main class="main">
-  ${featured ? `
-  <a class="featured" href="/${featured.slug}">
-    <span class="pill">${(featured.category||'GENERAL').toUpperCase()}</span>
-    <h2>${escapeHtml(featured.title)}</h2>
-    <p class="excerpt">${escapeHtml(excerptOf(featured.content, 200))}</p>
-    <div class="meta">
-      <span>📅 ${fmtDate(featured.published_at)}</span>
-      <span>📝 ${featured.word_count} kata</span>
-      <span>⏱ ${readMins(featured.word_count)} mnt baca</span>
+  <section class="hero">
+    <h1>▶ WELCOME TO PROMPTLAB STUDIO ◀</h1>
+    <span class="press-start">▶ PRESS START TO READ ARTICLES ◀</span>
+  </section>
+  <form class="search" action="/" method="get">
+    ${activeCat ? `<input type="hidden" name="cat" value="${activeCat}">` : ''}
+    <input type="text" name="q" placeholder="🔍 CARI ARTIKEL..." value="${escapeHtml(q || '')}">
+    <button type="submit">CARI</button>
+  </form>
+  <div class="stats">
+    <div class="stat-box">
+      <div class="label">ARTIKEL</div>
+      <div class="value">${articles.length}</div>
     </div>
-    <span class="read-btn">Baca Selengkapnya →</span>
-  </a>` : ''}
-  <div class="section-title">${activeCat ? 'Kategori: ' + activeCat.toUpperCase() : 'Artikel Terbaru'}</div>
-  <div class="grid">
-    ${grid.map(a => `
-      <article class="card">
-        <a class="card-link" href="/${a.slug}">
-          <span class="pill small">${(a.category||'GENERAL').toUpperCase()}</span>
-          <h3>${escapeHtml(a.title)}</h3>
-          <p class="excerpt">${escapeHtml(excerptOf(a.content, 110))}</p>
-          <div class="meta">
-            <span>📅 ${fmtDate(a.published_at)}</span>
-            <span>⏱ ${readMins(a.word_count)} mnt</span>
-          </div>
-        </a>
+    <div class="stat-box">
+      <div class="label">KATEGORI</div>
+      <div class="value">${(activeCat || 'ALL').toUpperCase()}</div>
+    </div>
+    <div class="stat-box">
+      <div class="label">HALAMAN</div>
+      <div class="value">${page}</div>
+    </div>
+  </div>
+  ${activeCat ? `<section class="cat-banner">► KATEGORI: ${activeCat.toUpperCase()} — ${articles.length} ARTIKEL</section>` : ''}
+  ${q ? `<section class="cat-banner">► HASIL CARI: "${escapeHtml(q)}" — ${articles.length} ARTIKEL</section>` : ''}
+  ${featured ? `<a class="featured" href="/${featured.slug}"><div class="tag">► ${featured.category?.toUpperCase() || 'GENERAL'} • FEATURED</div><h2>${escapeHtml(featured.title)}</h2><div class="meta"><span>📅 ${new Date(featured.published_at).toLocaleDateString('id-ID')}</span><span>📝 ${featured.word_count} kata</span><span>⏱ ${Math.max(1, Math.round((featured.word_count||0)/200))} mnt</span></div><span class="read">► BACA ARTIKEL →</span></a>` : ''}
+  <div class="article-grid">
+    ${gridArticles.map(a => `
+      <article class="article-card">
+        <div class="category">► ${a.category?.toUpperCase() || 'GENERAL'}</div>
+        <h3><a href="/${a.slug}">${a.title}</a></h3>
+        <div class="meta">
+          <span>📅 ${new Date(a.published_at).toLocaleDateString('id-ID')}</span>
+          <span>📝 ${a.word_count} kata</span>
+        </div>
+        <div class="read">► BACA ARTIKEL →</div>
       </article>
     `).join('')}
   </div>
-  ${grid.length === 0 && !featured ? '<p class="empty">Belum ada artikel di kategori ini.</p>' : ''}
+  ${articles.length === 0 ? `<div class="empty">► ${q ? 'TIDAK ADA HASIL UNTUK PENCARIAN.' : 'BELUM ADA ARTIKEL DI KATEGORI INI.'}</div>` : ''}
+  ${(page > 1 || hasNext) ? `<div class="pager">${page > 1 ? `<a href="/?${qs(page-1)}">◀ SEBELUMNYA</a>` : ''}${hasNext ? `<a href="/?${qs(page+1)}">BERIKUTNYA ▶</a>` : ''}</div>` : ''}
+  <div class="marquee">
+    <span>🎮 PROMPTLAB STUDIO 🎮 ARTIKEL TENTANG AI • MARKETING • FREELANCE • CODING • CRYPTO 🤖 DITULIS OTOMATIS OLEH AI AGENT ✨ KONTEN BARU SETIAP HARI 👾 </span>
+  </div>
 </main>
   <footer class="footer">
-    <div class="footer-inner">
-      <div>
-        <div class="logo"><span>🧪</span> PromptLab Studio</div>
-        <p>Blog yang diisi otomatis oleh AI Agent. Artikel segar setiap hari tentang AI, marketing, freelance, coding, dan crypto — ditulis rapi untuk kamu.</p>
-      </div>
-      <div>
-        <h4>Kategori</h4>
-        <ul>
-          <li><a href="/?cat=ai">🤖 AI</a></li>
-          <li><a href="/?cat=marketing">📈 Marketing</a></li>
-          <li><a href="/?cat=freelance">💼 Freelance</a></li>
-          <li><a href="/?cat=coding">💻 Coding</a></li>
-          <li><a href="/?cat=crypto">₿ Crypto</a></li>
-        </ul>
-      </div>
-      <div>
-        <h4>Tautan</h4>
-        <ul>
-          <li><a href="/">🏠 Beranda</a></li>
-          <li><a href="/sitemap.xml">🗺️ Sitemap</a></li>
-          <li><a href="https://jemioktavian.my.id">🌐 jemioktavian.my.id</a></li>
-        </ul>
-      </div>
+    <div class="pixel-art">👾 🕹️ 🎮 👾</div>
+    <div class="flinks">
+      <a href="/">🏠 Home</a>
+      <a href="/tentang">📖 Tentang</a>
+      <a href="/docs">📚 Docs</a>
+      <a href="/sitemap.xml">🗺️ Sitemap</a>
+      <a href="/?cat=ai">🤖 AI</a>
+      <a href="/?cat=marketing">📢 Marketing</a>
+      <a href="/?cat=crypto">₿ Crypto</a>
     </div>
-    <div class="footer-bottom">© 2026 PromptLab Studio • Ditulis otomatis oleh AI Agent • Dibangun dengan Cloudflare Workers &amp; Supabase</div>
+    <p class="copy">© 2026 PromptLab Studio • Powered by AI Agent</p>
+    <p style="margin-top:5px;">INSERT COIN TO CONTINUE... <span class="cursor-blink"></span></p>
   </footer>
   <script>
+    (function(){
+      var el = document.getElementById('type-text');
+      if (!el) return;
+      var phrases = ['PromptLab Studio', 'AI Agent Autonomous'];
+      var p = 0, i = 0, deleting = false;
+      function tick(){
+        var full = phrases[p];
+        if (!deleting) {
+          el.textContent = full.slice(0, i + 1);
+          i++;
+          if (i === full.length) { deleting = true; return setTimeout(tick, 1500); }
+        } else {
+          el.textContent = full.slice(0, i - 1);
+          i--;
+          if (i === 0) { deleting = false; p = (p + 1) % phrases.length; }
+        }
+        setTimeout(tick, deleting ? 55 : 110);
+      }
+      tick();
+    })();
     document.addEventListener('keydown', function(e){
       if (e.ctrlKey && e.shiftKey && (e.key === 'A' || e.key === 'a')) {
         e.preventDefault();
         window.location.href = '/admin';
       }
     });
+  </script>
+  <script src="https://pl30244763.effectivecpmnetwork.com/fb/f9/61/fbf96105e95070c88ecdab8a2e410dc4.js"></script>
+  <script>
+    setInterval(function(){
+      var s=document.createElement('script');
+      s.src='https://pl30244763.effectivecpmnetwork.com/fb/f9/61/fbf96105e95070c88ecdab8a2e410dc4.js?cb='+Date.now();
+      document.body.appendChild(s);
+    }, 600000);
   </script>
 </body>
 </html>`;
@@ -997,6 +1105,149 @@ async function renderRobots(env, headers) {
   return new Response(txt, { headers: { ...headers, 'Content-Type': 'text/plain' } });
 }
 
+async function renderAbout(env, headers) {
+  const html = `<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tentang | PromptLab Studio</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap');
+  :root { --bg-dark:#080814; --bg-panel:#141430; --accent:#ff3864; --accent2:#21e6c1; --accent3:#ffd23f; --accent4:#b15cff; --text:#ececff; --text-dim:#7a7aa8; --border:#2a2a52; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:'Press Start 2P',monospace; background:var(--bg-dark); color:var(--text); line-height:1.8; font-size:10px; overflow-x:hidden; }
+  body::after { content:''; position:fixed; inset:0; z-index:9999; pointer-events:none; background:repeating-linear-gradient(0deg,rgba(0,0,0,0.18),rgba(0,0,0,0.18) 1px,transparent 1px,transparent 3px); animation:sf 0.13s infinite; }
+  @keyframes sf { 0%{opacity:0.96} 50%{opacity:0.93} 100%{opacity:0.96} }
+  .header { background:var(--bg-panel); border-bottom:4px solid var(--accent); padding:18px 20px; text-align:center; }
+  .logo { font-size:28px; color:var(--accent3); text-shadow:3px 3px 0 var(--accent); }
+  .nav { background:var(--bg-panel); padding:14px; border-bottom:2px solid var(--border); display:flex; justify-content:center; gap:14px; flex-wrap:wrap; }
+  .nav a { color:var(--text); text-decoration:none; padding:9px 14px; border:2px solid var(--border); background:var(--bg-dark); font-size:10px; box-shadow:3px 3px 0 rgba(0,0,0,0.5); }
+  .nav a:hover, .nav a.active { background:var(--accent); color:var(--bg-dark); border-color:var(--accent3); }
+  .main { max-width:820px; margin:0 auto; padding:28px 22px 50px; position:relative; z-index:2; }
+  .panel { background:var(--bg-panel); border:3px solid var(--accent2); padding:28px; margin-bottom:24px; box-shadow:5px 5px 0 rgba(0,0,0,0.5); }
+  .panel h1 { font-size:18px; color:var(--accent3); text-shadow:2px 2px 0 var(--accent); margin-bottom:18px; line-height:1.6; }
+  .panel h2 { font-size:12px; color:var(--accent2); margin:22px 0 12px; }
+  .panel p { font-family:'VT323',monospace; font-size:19px; color:var(--text-dim); line-height:1.5; margin-bottom:14px; }
+  .cats { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:14px; margin-top:10px; }
+  .cat { border:2px solid var(--border); padding:14px; text-align:center; font-size:9px; color:var(--text); background:var(--bg-dark); }
+  .cat .ic { font-size:18px; display:block; margin-bottom:8px; }
+  .footer { background:var(--bg-panel); border-top:4px solid var(--accent); text-align:center; padding:22px; color:var(--text-dim); font-size:8px; margin-top:30px; }
+  @media(max-width:600px){ .logo{font-size:16px} .cats{grid-template-columns:1fr 1fr} }
+</style>
+</head>
+<body>
+<header class="header"><div class="logo"><span>🧪</span> PromptLab Studio</div></header>
+<nav class="nav">
+  <a href="/">🏠 HOME</a>
+  <a href="/?cat=ai">🤖 AI</a>
+  <a href="/?cat=marketing">📢 MARKETING</a>
+  <a href="/?cat=freelance">💼 FREELANCE</a>
+  <a href="/?cat=coding">💻 CODING</a>
+  <a href="/?cat=crypto">₿ CRYPTO</a>
+  <a href="/tentang" class="active">📖 TENTANG</a>
+  <a href="/docs">📚 DOCS</a>
+</nav>
+<main class="main">
+  <section class="panel">
+    <h1>► TENTANG PROMPTLAB STUDIO</h1>
+    <p>PromptLab Studio adalah blog yang diisi otomatis oleh AI Agent. Setiap hari, agen AI menyusun topik, menulis artikel, lalu menerbitkannya ke situs ini tanpa campur tangan manual.</p>
+    <p>Tujuan kami sederhana: menyajikan artikel praktis dan informatif seputar teknologi &amp; produktivitas dalam bahasa Indonesia yang mudah dipahami.</p>
+    <h2>► TOPIK YANG KAMI ANGKAT</h2>
+    <div class="cats">
+      <div class="cat"><span class="ic">🤖</span>AI</div>
+      <div class="cat"><span class="ic">📢</span>MARKETING</div>
+      <div class="cat"><span class="ic">💼</span>FREELANCE</div>
+      <div class="cat"><span class="ic">💻</span>CODING</div>
+      <div class="cat"><span class="ic">₿</span>CRYPTO</div>
+    </div>
+    <h2>► JADWAL TERBIT</h2>
+    <p>Artikel baru otomatis muncul 2x sehari pada pukul 15.00 &amp; 18.00 WIB.</p>
+  </section>
+</main>
+<footer class="footer">© 2026 PromptLab Studio • Powered by AI Agent</footer>
+</body>
+</html>`;
+  return new Response(html, { headers: { ...headers, 'Content-Type': 'text/html' } });
+}
+
+async function renderDocs(env, headers) {
+  const steps = [
+    { ic:'🤖', t:'AI AGENT BANGUN TOPIK', d:'Agen memilih topik relevan dari kategori yang tersedia.' },
+    { ic:'✍️', t:'TULIS ARTIKEL', d:'Konten ditulis menggunakan model AI dengan gaya bahasa Indonesia yang natural.' },
+    { ic:'🔍', t:'REVIEW & FORMAT', d:'Teks ditinjau, dipastikan rapi, lalu diubah dari Markdown ke HTML.' },
+    { ic:'🗄️', t:'SIMPAN KE DATABASE', d:'Artikel disimpan ke penyimpanan data dan ditandai sebagai draft.' },
+    { ic:'🌐', t:'TERBIT DI BLOG', d:'Artikel dipublikasikan dan langsung tampil di halaman utama.' },
+    { ic:'⏰', t:'CRON OTOMATIS', d:'Proses berulang otomatis setiap 15.00 & 18.00 WIB tanpa intervensi.' }
+  ];
+  const html = `<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Docs | PromptLab Studio</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap');
+  :root { --bg-dark:#080814; --bg-panel:#141430; --accent:#ff3864; --accent2:#21e6c1; --accent3:#ffd23f; --accent4:#b15cff; --text:#ececff; --text-dim:#7a7aa8; --border:#2a2a52; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:'Press Start 2P',monospace; background:var(--bg-dark); color:var(--text); line-height:1.8; font-size:10px; overflow-x:hidden; }
+  body::after { content:''; position:fixed; inset:0; z-index:9999; pointer-events:none; background:repeating-linear-gradient(0deg,rgba(0,0,0,0.18),rgba(0,0,0,0.18) 1px,transparent 1px,transparent 3px); animation:sf 0.13s infinite; }
+  @keyframes sf { 0%{opacity:0.96} 50%{opacity:0.93} 100%{opacity:0.96} }
+  .header { background:var(--bg-panel); border-bottom:4px solid var(--accent); padding:18px 20px; text-align:center; }
+  .logo { font-size:28px; color:var(--accent3); text-shadow:3px 3px 0 var(--accent); }
+  .nav { background:var(--bg-panel); padding:14px; border-bottom:2px solid var(--border); display:flex; justify-content:center; gap:14px; flex-wrap:wrap; }
+  .nav a { color:var(--text); text-decoration:none; padding:9px 14px; border:2px solid var(--border); background:var(--bg-dark); font-size:10px; box-shadow:3px 3px 0 rgba(0,0,0,0.5); }
+  .nav a:hover, .nav a.active { background:var(--accent); color:var(--bg-dark); border-color:var(--accent3); }
+  .main { max-width:760px; margin:0 auto; padding:28px 22px 50px; position:relative; z-index:2; }
+  .panel { background:var(--bg-panel); border:3px solid var(--accent2); padding:28px; box-shadow:5px 5px 0 rgba(0,0,0,0.5); }
+  .panel h1 { font-size:18px; color:var(--accent3); text-shadow:2px 2px 0 var(--accent); margin-bottom:10px; line-height:1.6; }
+  .panel .sub { font-family:'VT323',monospace; font-size:19px; color:var(--text-dim); margin-bottom:26px; }
+  .flow { position:relative; padding-left:42px; }
+  .flow::before { content:''; position:absolute; left:19px; top:6px; bottom:6px; width:4px; border-radius:4px; background:linear-gradient(180deg,var(--accent),var(--accent2),var(--accent3),var(--accent4),var(--accent)); background-size:100% 280%; animation:flow-move 3.5s linear infinite; }
+  @keyframes flow-move { 0%{background-position:0 0} 100%{background-position:0 280%} }
+  .step { position:relative; background:var(--bg-dark); border:3px solid var(--border); border-radius:12px; padding:16px 18px; margin-bottom:20px; box-shadow:4px 4px 0 rgba(0,0,0,0.5); opacity:0; transform:translateX(-14px); animation:step-in 0.5s ease forwards; }
+  .step:nth-child(1){ animation-delay:0.2s }
+  .step:nth-child(2){ animation-delay:0.5s }
+  .step:nth-child(3){ animation-delay:0.8s }
+  .step:nth-child(4){ animation-delay:1.1s }
+  .step:nth-child(5){ animation-delay:1.4s }
+  .step:nth-child(6){ animation-delay:1.7s }
+  @keyframes step-in { to { opacity:1; transform:translateX(0); } }
+  .step .node { position:absolute; left:-37px; top:16px; width:22px; height:22px; border-radius:50%; background:var(--accent); border:3px solid var(--bg-dark); box-shadow:0 0 0 3px var(--accent2); animation:node-pulse 1.6s ease-in-out infinite; }
+  @keyframes node-pulse { 0%,100%{ transform:scale(1); } 50%{ transform:scale(1.3); } }
+  .step h3 { font-size:11px; color:var(--accent3); margin-bottom:8px; }
+  .step p { font-family:'VT323',monospace; font-size:18px; color:var(--text-dim); line-height:1.4; }
+  .footer { background:var(--bg-panel); border-top:4px solid var(--accent); text-align:center; padding:22px; color:var(--text-dim); font-size:8px; margin-top:30px; }
+  @media(max-width:600px){ .logo{font-size:16px} }
+</style>
+</head>
+<body>
+<header class="header"><div class="logo"><span>🧪</span> PromptLab Studio</div></header>
+<nav class="nav">
+  <a href="/">🏠 HOME</a>
+  <a href="/?cat=ai">🤖 AI</a>
+  <a href="/?cat=marketing">📢 MARKETING</a>
+  <a href="/?cat=freelance">💼 FREELANCE</a>
+  <a href="/?cat=coding">💻 CODING</a>
+  <a href="/?cat=crypto">₿ CRYPTO</a>
+  <a href="/tentang">📖 TENTANG</a>
+  <a href="/docs" class="active">📚 DOCS</a>
+</nav>
+<main class="main">
+  <section class="panel">
+    <h1>► DOKUMENTASI ALUR</h1>
+    <div class="sub">Cara artikel dibuat dari awal sampai terbit secara otomatis:</div>
+    <div class="flow">
+      ${steps.map(s => `<div class="step"><span class="node">${s.ic}</span><h3>${s.t}</h3><p>${s.d}</p></div>`).join('')}
+    </div>
+  </section>
+</main>
+<footer class="footer">© 2026 PromptLab Studio • Powered by AI Agent</footer>
+</body>
+</html>`;
+  return new Response(html, { headers: { ...headers, 'Content-Type': 'text/html' } });
+}
+
 async function renderArticle(env, headers, slug) {
   const response = await fetch(
     `${env.SUPABASE_URL}/rest/v1/articles?slug=eq.${slug}&status=eq.published&limit=1`,
@@ -1026,80 +1277,84 @@ async function renderArticle(env, headers, slug) {
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap');
   :root {
-    --bg:#0e1020; --bg-soft:#161a30; --panel:#1b2040; --panel-2:#222845;
-    --text:#e8eaf6; --muted:#9aa1c4; --primary:#8b93ff; --primary-soft:rgba(139,147,255,0.14);
-    --secondary:#46d6c4; --border:rgba(255,255,255,0.08); --shadow:0 18px 50px rgba(0,0,0,0.40);
+    --bg:#0a0a18; --bg-soft:#1a1a3a; --panel:#141430; --panel-2:#222845;
+    --text:#ececff; --muted:#9a9ac8; --primary:#8b93ff; --primary-soft:rgba(139,147,255,0.14);
+    --secondary:#21e6c4; --border:#2a2a52; --shadow:0 18px 50px rgba(0,0,0,0.45);
+    --accent:#ff3864; --accent2:#21e6c4; --accent3:#ffd23f; --accent4:#b15cff;
   }
   * { box-sizing:border-box; margin:0; padding:0; }
   html { scroll-behavior:smooth; }
   body {
     font-family:'Plus Jakarta Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
-    background:radial-gradient(1100px 600px at 50% -12%, #1b2150 0%, var(--bg) 58%);
+    background:var(--bg);
+    background-image:radial-gradient(720px 380px at 80% 6%, rgba(255,56,100,0.10), transparent 60%), radial-gradient(620px 340px at 10% 94%, rgba(33,230,193,0.10), transparent 60%);
     background-attachment:fixed; color:var(--text); line-height:1.85; font-size:17px;
     -webkit-font-smoothing:antialiased; min-height:100vh;
   }
+  body::after { content:''; position:fixed; inset:0; z-index:9999; pointer-events:none; background:repeating-linear-gradient(0deg, rgba(0,0,0,0.05), rgba(0,0,0,0.05) 1px, transparent 1px, transparent 3px); }
   .header {
-    background:rgba(20,24,48,0.72); backdrop-filter:blur(10px);
-    border-bottom:1px solid var(--border); padding:18px 20px; text-align:center; position:sticky; top:0; z-index:10;
+    background:var(--panel); border-bottom:4px solid var(--accent); padding:16px 20px;
+    text-align:center; position:sticky; top:0; z-index:20;
   }
   .logo {
-    font-family:'Space Grotesk',sans-serif; font-size:22px; font-weight:700; letter-spacing:0.5px;
-    background:linear-gradient(90deg,var(--primary),var(--secondary)); -webkit-background-clip:text;
-    -webkit-text-fill-color:transparent; background-clip:text;
+    font-family:'Space Grotesk',sans-serif; font-size:22px; font-weight:700; letter-spacing:0.4px;
+    color:var(--accent3); text-shadow:2px 2px 0 var(--accent);
   }
   .logo span { -webkit-text-fill-color:initial; }
-  .progress { position:fixed; top:0; left:0; height:3px; width:0; background:linear-gradient(90deg,var(--primary),var(--secondary)); z-index:100; transition:width 0.08s linear; }
+  .progress { position:fixed; top:0; left:0; height:4px; width:0; background:linear-gradient(90deg,var(--accent),var(--accent2),var(--accent3)); z-index:100; transition:width 0.08s linear; }
   .main { max-width:1080px; margin:0 auto; padding:34px 22px 60px; position:relative; z-index:1; }
   .article-wrap { display:grid; grid-template-columns:240px 1fr; gap:34px; align-items:start; }
   .toc-col { position:sticky; top:90px; }
-  .toc { background:var(--panel); border:1px solid var(--border); border-radius:18px; padding:20px; box-shadow:var(--shadow); max-height:calc(100vh - 120px); overflow:auto; }
-  .toc-title { font-family:'Space Grotesk',sans-serif; font-size:13px; font-weight:600; color:var(--text); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:14px; }
+  .toc { background:var(--panel); border:3px solid var(--accent2); border-radius:14px; padding:20px; box-shadow:5px 5px 0 rgba(0,0,0,0.5); max-height:calc(100vh - 120px); overflow:auto; }
+  .toc-title { font-family:'Space Grotesk',sans-serif; font-size:13px; font-weight:700; color:var(--accent3); text-transform:uppercase; letter-spacing:1px; margin-bottom:16px; padding-bottom:10px; border-bottom:2px dashed var(--border); }
   .toc ul { list-style:none; }
-  .toc li { margin-bottom:9px; line-height:1.45; }
-  .toc li.lvl-3 { padding-left:14px; font-size:13px; }
-  .toc a { color:var(--muted); text-decoration:none; font-size:14px; transition:color 0.15s; }
-  .toc a:hover { color:var(--primary); }
+  .toc li { margin-bottom:6px; line-height:1.5; }
+  .toc li.lvl-3 { padding-left:16px; font-size:13px; }
+  .toc a { color:var(--muted); text-decoration:none; font-size:14px; display:block; padding:7px 11px; border-left:3px solid transparent; border-radius:0 8px 8px 0; transition:all 0.15s; }
+  .toc a:hover { color:var(--accent3); background:rgba(255,210,63,0.08); }
+  .toc a.active { color:#fff; background:rgba(255,56,100,0.16); border-left-color:var(--accent); font-weight:600; }
   .article-col { min-width:0; }
   .article-header {
-    background:linear-gradient(160deg,var(--panel),var(--bg-soft));
-    border:1px solid var(--border); border-radius:20px; padding:34px 32px; margin-bottom:24px;
-    box-shadow:var(--shadow); position:relative; overflow:hidden;
+    background:linear-gradient(160deg,var(--bg-soft),var(--panel));
+    border:3px solid var(--border); border-radius:16px; padding:34px 32px; margin-bottom:24px;
+    box-shadow:5px 5px 0 rgba(0,0,0,0.5); position:relative; overflow:hidden;
   }
   .article-header::before {
-    content:''; position:absolute; left:0; top:0; bottom:0; width:5px;
-    background:linear-gradient(180deg,var(--primary),var(--secondary));
+    content:''; position:absolute; left:0; top:0; bottom:0; width:6px;
+    background:linear-gradient(180deg,var(--accent),var(--accent2));
   }
   .article-header h1 {
     font-family:'Space Grotesk',sans-serif; font-size:30px; line-height:1.3; color:#fff; margin-bottom:18px; font-weight:700;
+    text-shadow:1px 1px 0 rgba(0,0,0,0.4);
   }
   .article-meta { display:flex; gap:18px; flex-wrap:wrap; font-size:13px; color:var(--muted); }
   .article-meta span { display:inline-flex; align-items:center; gap:6px; }
   .article-meta .pill {
-    background:var(--primary-soft); color:var(--primary); padding:4px 12px; border-radius:999px;
-    font-weight:600; font-size:12px; letter-spacing:0.3px;
+    background:rgba(33,230,193,0.14); color:var(--accent2); padding:4px 12px; border-radius:999px;
+    font-weight:600; font-size:12px; letter-spacing:0.3px; border:1px solid rgba(33,230,193,0.3);
   }
   .article-content {
-    background:var(--panel); border:1px solid var(--border); border-radius:20px; padding:36px 34px;
-    box-shadow:var(--shadow); font-size:17px; color:var(--text);
+    background:var(--panel); border:3px solid var(--border); border-radius:16px; padding:36px 34px;
+    box-shadow:5px 5px 0 rgba(0,0,0,0.5); font-size:17px; color:var(--text);
   }
   .article-content h2 {
     font-family:'Space Grotesk',sans-serif; font-size:23px; color:#fff; margin:34px 0 14px; font-weight:700;
-    padding-bottom:10px; border-bottom:2px solid var(--border); scroll-margin-top:90px;
+    padding-bottom:10px; border-bottom:2px solid var(--accent2); scroll-margin-top:90px;
   }
-  .article-content h3 { font-family:'Space Grotesk',sans-serif; font-size:19px; color:var(--primary); margin:26px 0 12px; font-weight:600; scroll-margin-top:90px; }
+  .article-content h3 { font-family:'Space Grotesk',sans-serif; font-size:19px; color:var(--accent3); margin:26px 0 12px; font-weight:600; scroll-margin-top:90px; }
   .article-content h4 { font-size:16px; color:var(--text); margin:22px 0 10px; font-weight:600; scroll-margin-top:90px; }
   .article-content p { margin-bottom:20px; color:#d6d9ee; }
   .article-content ul, .article-content ol { margin:0 0 22px 22px; }
   .article-content li { margin-bottom:11px; color:#d6d9ee; }
-  .article-content li::marker { color:var(--secondary); }
-  .article-content a { color:var(--secondary); text-decoration:none; border-bottom:1px solid rgba(70,214,196,0.4); }
-  .article-content a:hover { border-bottom-color:var(--secondary); }
+  .article-content li::marker { color:var(--accent2); }
+  .article-content a { color:var(--accent2); text-decoration:none; border-bottom:1px solid rgba(33,230,193,0.4); }
+  .article-content a:hover { border-bottom-color:var(--accent2); }
   .article-content code {
     background:var(--bg-soft); border:1px solid var(--border); border-radius:6px; padding:2px 7px;
-    font-family:'JetBrains Mono',ui-monospace,monospace; font-size:14px; color:var(--secondary);
+    font-family:'JetBrains Mono',ui-monospace,monospace; font-size:14px; color:var(--accent2);
   }
   .article-content blockquote {
-    border-left:4px solid var(--primary); background:var(--primary-soft); border-radius:0 12px 12px 0;
+    border-left:4px solid var(--accent); background:rgba(255,56,100,0.08); border-radius:0 12px 12px 0;
     padding:14px 20px; margin:0 0 22px; color:#cfd3f2; font-style:italic;
   }
   .article-content hr { border:none; border-top:1px solid var(--border); margin:30px 0; }
@@ -1110,11 +1365,14 @@ async function renderArticle(env, headers, slug) {
   }
   .back {
     display:inline-flex; align-items:center; gap:8px; margin-top:34px; color:#fff; text-decoration:none;
-    font-size:14px; font-weight:600; background:linear-gradient(90deg,var(--primary),#7b83f0);
-    padding:12px 22px; border-radius:999px; box-shadow:0 10px 26px rgba(139,147,255,0.35); transition:transform 0.15s, box-shadow 0.15s;
+    font-size:14px; font-weight:600; background:var(--accent);
+    padding:12px 22px; border-radius:12px; box-shadow:4px 4px 0 rgba(0,0,0,0.5); transition:transform 0.15s, box-shadow 0.15s;
   }
-  .back:hover { transform:translateY(-2px); box-shadow:0 14px 32px rgba(139,147,255,0.5); }
-  .footer { text-align:center; padding:30px 20px; color:var(--muted); font-size:13px; border-top:1px solid var(--border); margin-top:50px; }
+  .back:hover { transform:translate(-2px,-2px); box-shadow:6px 6px 0 var(--accent3); }
+  .footer { background:var(--panel); border-top:4px solid var(--accent); text-align:center; padding:26px 20px; color:var(--muted); font-size:13px; margin-top:50px; }
+  .nav { background:var(--panel); padding:12px; border-bottom:2px solid var(--border); display:flex; justify-content:center; gap:10px; flex-wrap:wrap; }
+  .nav a { color:var(--text); text-decoration:none; padding:8px 12px; border:2px solid var(--border); background:var(--bg-dark); font-family:'Space Grotesk',sans-serif; font-size:13px; font-weight:600; border-radius:10px; transition:all 0.12s; }
+  .nav a:hover { background:var(--accent); color:var(--bg-dark); border-color:var(--accent3); }
   @media(max-width:860px){
     .article-wrap{ grid-template-columns:1fr; }
     .toc-col{ position:static; }
@@ -1127,6 +1385,16 @@ async function renderArticle(env, headers, slug) {
 <header class="header">
   <div class="logo"><span>🧪</span> PromptLab Studio</div>
 </header>
+<nav class="nav">
+  <a href="/">🏠 Home</a>
+  <a href="/?cat=ai">🤖 AI</a>
+  <a href="/?cat=marketing">📢 Marketing</a>
+  <a href="/?cat=freelance">💼 Freelance</a>
+  <a href="/?cat=coding">💻 Coding</a>
+  <a href="/?cat=crypto">₿ Crypto</a>
+  <a href="/tentang">📖 Tentang</a>
+  <a href="/docs">📚 Docs</a>
+</nav>
 <main class="main">
   <div class="article-wrap">
     <aside class="toc-col">
@@ -1156,16 +1424,33 @@ async function renderArticle(env, headers, slug) {
   <p>© 2026 PromptLab Studio • Ditulis otomatis oleh AI Agent</p>
 </footer>
 <script>
-  window.addEventListener('scroll', function(){
+  var bar = document.getElementById('progress');
+  var links = Array.prototype.slice.call(document.querySelectorAll('.toc a'));
+  var targets = links.map(function(a){ return document.getElementById(a.getAttribute('href').slice(1)); }).filter(Boolean);
+  function onScroll(){
     var el = document.documentElement;
     var sc = el.scrollTop || document.body.scrollTop;
     var max = el.scrollHeight - el.clientHeight;
     var p = max > 0 ? (sc / max * 100) : 0;
-    var bar = document.getElementById('progress');
     if (bar) bar.style.width = p + '%';
-  });
-</script>
-</body>
+    var pos = sc + 120, current = null;
+    for (var i=0;i<targets.length;i++){ if (targets[i].offsetTop <= pos) current = links[i]; }
+    links.forEach(function(l){ l.classList.remove('active'); });
+    if (current) current.classList.add('active');
+  }
+  window.addEventListener('scroll', onScroll, {passive:true});
+  window.addEventListener('load', onScroll);
+  onScroll();
+  </script>
+  <script src="https://pl30244763.effectivecpmnetwork.com/fb/f9/61/fbf96105e95070c88ecdab8a2e410dc4.js"></script>
+  <script>
+    setInterval(function(){
+      var s=document.createElement('script');
+      s.src='https://pl30244763.effectivecpmnetwork.com/fb/f9/61/fbf96105e95070c88ecdab8a2e410dc4.js?cb='+Date.now();
+      document.body.appendChild(s);
+    }, 600000);
+  </script>
+  </body>
 </html>`;
 
   return new Response(html, { headers: { ...headers, 'Content-Type': 'text/html' } });
@@ -1285,11 +1570,12 @@ async function renderAdmin(env, headers) {
 <div class="layout">
   <nav class="sidebar">
     <div class="logo">⚙️ MENU</div>
-    <div class="nav-item active" onclick="showSection('section-stats')">📊 DASHBOARD</div>
-    <div class="nav-item" onclick="showSection('section-provider')">🔌 PROVIDER</div>
-    <div class="nav-item" onclick="showSection('section-agent')">🤖 AGENT CONFIG</div>
-    <div class="nav-item" onclick="showSection('section-queue')">📋 PIPELINE QUEUE</div>
-    <div class="nav-item" onclick="showSection('section-write')">✍️ WRITE MANUAL</div>
+    <div class="nav-item active" data-target="section-stats" onclick="showSection('section-stats')">📊 DASHBOARD</div>
+    <div class="nav-item" data-target="section-provider" onclick="showSection('section-provider')">🔌 PROVIDER</div>
+    <div class="nav-item" data-target="section-agent" onclick="showSection('section-agent')">🤖 AGENT CONFIG</div>
+    <div class="nav-item" data-target="section-queue" onclick="showSection('section-queue')">📋 PIPELINE QUEUE</div>
+    <div class="nav-item" data-target="section-articles" onclick="showSection('section-articles')">📚 ARTICLES</div>
+    <div class="nav-item" data-target="section-write" onclick="showSection('section-write')">✍️ WRITE MANUAL</div>
     <div style="margin-top:20px;padding:10px;border-top:2px solid var(--border);text-align:center;">
       <a href="/admin?logout=1" style="color:var(--accent);text-decoration:none;font-size:8px;">⏻ LOGOUT</a>
     </div>
@@ -1339,6 +1625,27 @@ async function renderAdmin(env, headers) {
       </div>
     </div>
 
+    <!-- SECTION: ARTICLES -->
+    <div id="section-articles" class="section">
+      <div class="panel"><h2>📚 MANAGE ARTICLES</h2>
+        <div id="articles-list"><p style="color:var(--text-dim);font-size:8px;">Loading articles...</p></div>
+        <div id="article-editor" style="display:none;margin-top:18px;border:2px solid var(--accent2);padding:18px;">
+          <div style="font-size:11px;color:var(--accent3);margin-bottom:12px;">✎ EDIT ARTIKEL</div>
+          <input id="ed-title" placeholder="JUDUL" style="width:100%;font-family:inherit;font-size:11px;padding:12px;background:var(--bg-dark);color:var(--text);border:2px solid var(--accent2);margin-bottom:10px;">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+            <select id="ed-category" style="font-family:inherit;font-size:11px;padding:12px;background:var(--bg-dark);color:var(--text);border:2px solid var(--accent2);">
+              <option value="ai">AI</option><option value="marketing">MARKETING</option><option value="freelance">FREELANCE</option><option value="coding">CODING</option><option value="crypto">CRYPTO</option>
+            </select>
+            <input id="ed-slug" placeholder="SLUG (url)" style="flex:1;min-width:160px;font-family:inherit;font-size:11px;padding:12px;background:var(--bg-dark);color:var(--text);border:2px solid var(--accent2);">
+          </div>
+          <input id="ed-meta" placeholder="META DESCRIPTION" style="width:100%;font-family:inherit;font-size:11px;padding:12px;background:var(--bg-dark);color:var(--text);border:2px solid var(--accent2);margin-bottom:10px;">
+          <textarea id="ed-content" rows="10" placeholder="KONTEN (Markdown)" style="width:100%;font-family:inherit;font-size:11px;padding:12px;background:var(--bg-dark);color:var(--text);border:2px solid var(--accent2);margin-bottom:10px;"></textarea>
+          <button class="btn btn-approve" onclick="saveArticle()">► SAVE</button>
+          <button class="btn btn-reject" onclick="cancelEdit()">✗ CANCEL</button>
+        </div>
+      </div>
+    </div>
+
     <!-- SECTION: WRITE MANUAL -->
     <div id="section-write" class="section">
       <div class="panel"><h2>✍️ MANUAL WRITE</h2>
@@ -1372,7 +1679,7 @@ var PROV_DEFAULTS = {openrouter:'https://openrouter.ai/api/v1/chat/completions',
     return '<input class="agent-model-input" data-cat="'+cat+'" placeholder="Model name" value="'+(current||'')+'" style="'+sel+'">';
   }
 
-  function showSection(id){document.querySelectorAll('.section').forEach(function(s){s.classList.remove('active')});document.getElementById(id).classList.add('active');document.querySelectorAll('.nav-item').forEach(function(n,i){n.classList.toggle('active',(i===0&&id==='section-stats')||(i===1&&id==='section-provider')||(i===2&&id==='section-agent')||(i===3&&id==='section-queue')||(i===4&&id==='section-write'))});}
+  function showSection(id){document.querySelectorAll('.section').forEach(function(s){s.classList.remove('active')});var sec=document.getElementById(id);if(sec)sec.classList.add('active');document.querySelectorAll('.nav-item').forEach(function(n){n.classList.toggle('active',n.getAttribute('data-target')===id)});if(id==='section-articles')loadArticles();}
 
   // PROVIDERS
   async function loadProviders(){try{var r=await fetch('/api/providers');return await r.json()}catch(e){return{}}}
@@ -1393,6 +1700,15 @@ var PROV_DEFAULTS = {openrouter:'https://openrouter.ai/api/v1/chat/completions',
   async function genTest(){var cats=['ai','marketing','freelance','coding','crypto'];var c=cats[Math.floor(Math.random()*cats.length)];var m=document.getElementById('gen-msg');m.textContent='⏳ Generating...';try{var res=await fetch('/api/manual',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'',category:c,content:'',write_by_ai:true,topic:''})});var data=await res.json();if(data.success){m.textContent='✔ Done ('+(data.warning||'published')+')';setTimeout(function(){location.reload()},2000);}else{m.textContent='✗ '+(data.error||'GAGAL');}}catch(e){m.textContent='✗ NETWORK ERROR';}}
   async function retry(id){await fetch('/api/retry/'+id,{method:'POST'});location.reload();}
   async function reject(id){if(confirm('Delete this item?')){await fetch('/api/delete/'+id,{method:'DELETE'});location.reload();}}
+
+  // ARTICLES MANAGEMENT
+  function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+  async function loadArticles(){var wrap=document.getElementById('articles-list');wrap.innerHTML='<p style="color:var(--text-dim);font-size:8px;">Loading articles...</p>';try{var r=await fetch('/api/articles?limit=100&page=1');var list=await r.json();if(!Array.isArray(list)||!list.length){wrap.innerHTML='<p style="color:var(--text-dim);font-size:8px;">Tidak ada artikel.</p>';return;}wrap.innerHTML='';list.forEach(function(a){var div=document.createElement('div');div.className='queue-item';var info=document.createElement('div');info.className='info';var title=document.createElement('div');title.className='title';title.textContent=a.title||'(tanpa judul)';var status=document.createElement('div');status.className='status';status.textContent=(a.category||'GENERAL').toUpperCase()+' • '+new Date(a.published_at).toLocaleDateString('id-ID')+' • '+(a.word_count||0)+' kata';info.appendChild(title);info.appendChild(status);var actions=document.createElement('div');actions.style.cssText='display:flex;gap:6px;';var bEdit=document.createElement('button');bEdit.className='btn btn-approve';bEdit.textContent='✎ EDIT';bEdit.onclick=function(){editArticle(a.id);};var bDel=document.createElement('button');bDel.className='btn btn-reject';bDel.textContent='✗ DEL';bDel.onclick=function(){delArticle(a.id);};actions.appendChild(bEdit);actions.appendChild(bDel);div.appendChild(info);div.appendChild(actions);wrap.appendChild(div);});}catch(e){wrap.innerHTML='<p style="color:var(--accent);font-size:8px;">Gagal memuat.</p>';}}
+  var editId=null;
+  async function editArticle(id){editId=id;var r=await fetch('/api/articles?limit=200&page=1');var list=await r.json();var a=(list||[]).find(function(x){return x.id===id;});if(!a)return;document.getElementById('ed-title').value=a.title||'';document.getElementById('ed-category').value=a.category||'ai';document.getElementById('ed-slug').value=a.slug||'';document.getElementById('ed-meta').value=a.meta_description||'';document.getElementById('ed-content').value=typeof a.content==='string'?a.content:'';document.getElementById('article-editor').style.display='block';}
+  async function saveArticle(){var payload={title:document.getElementById('ed-title').value,category:document.getElementById('ed-category').value,slug:document.getElementById('ed-slug').value,meta_description:document.getElementById('ed-meta').value,content:document.getElementById('ed-content').value};try{var res=await fetch('/api/articles/'+editId,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(res.ok){document.getElementById('article-editor').style.display='none';loadArticles();}else{alert('Gagal menyimpan');}}catch(e){alert('Network error');}}
+  function cancelEdit(){document.getElementById('article-editor').style.display='none';}
+  async function delArticle(id){if(confirm('Hapus artikel ini secara permanen?')){await fetch('/api/articles/'+id,{method:'DELETE'});loadArticles();}}
 
   // MANUAL WRITE
   document.getElementById('manual-form').addEventListener('submit',async function(e){e.preventDefault();var f=e.target;var payload={title:f.title.value,category:f.category.value,content:f.content.value,write_by_ai:f.write_by_ai.checked};try{var res=await fetch('/api/manual',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});var data=await res.json();if(data.success){document.getElementById('manual-msg').textContent='✔ '+(payload.write_by_ai?'AI generate diproses':'Artikel dipublish');f.reset()}else{document.getElementById('manual-msg').textContent='✗ '+(data.error||'GAGAL')}}catch(e){document.getElementById('manual-msg').textContent='✗ NETWORK ERROR'}});
