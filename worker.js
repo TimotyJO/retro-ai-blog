@@ -18,7 +18,7 @@ export default {
     }
 
     if (url.pathname === '/favicon.ico') {
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🧪</text></svg>`;
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" fill="#0a0a18"/><rect x="8" y="4" width="16" height="20" fill="#222845" rx="2"/><rect x="10" y="6" width="12" height="2" fill="#ff3864"/><rect x="10" y="10" width="10" height="2" fill="#21e6c4"/><rect x="10" y="14" width="8" height="2" fill="#ffd23f"/><rect x="10" y="18" width="6" height="2" fill="#b15cff"/><rect x="14" y="24" width="4" height="2" fill="#ececff"/><rect x="10" y="26" width="12" height="2" fill="#222845"/></svg>`;
       return new Response(svg, { headers: { 'Content-Type': 'image/svg+xml' } });
     }
 
@@ -762,6 +762,7 @@ async function renderHomepage(env, headers, url) {
 <html lang="id">
 <head>
 <meta charset="UTF-8">
+<link rel="icon" href="/favicon.ico">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PromptLab Studio</title>
 <style>
@@ -1139,6 +1140,7 @@ async function renderAbout(env, headers) {
 <html lang="id">
 <head>
 <meta charset="UTF-8">
+<link rel="icon" href="/favicon.ico">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tentang | PromptLab Studio</title>
 <style>
@@ -1213,6 +1215,7 @@ async function renderDocs(env, headers) {
 <html lang="id">
 <head>
 <meta charset="UTF-8">
+<link rel="icon" href="/favicon.ico">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Docs | PromptLab Studio</title>
 <style>
@@ -1300,6 +1303,7 @@ async function renderArticle(env, headers, slug) {
 <html lang="id">
 <head>
 <meta charset="UTF-8">
+<link rel="icon" href="/favicon.ico">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="description" content="${escapeHtml(article.meta_description || article.title)}">
 <title>${escapeHtml(article.title)} | PromptLab Studio</title>
@@ -1490,6 +1494,7 @@ async function renderLogin(env, headers, wrong) {
 <html lang="id">
 <head>
 <meta charset="UTF-8">
+<link rel="icon" href="/favicon.ico">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>🔐 ADMIN LOGIN | PromptLab Studio</title>
 <style>
@@ -1538,6 +1543,7 @@ async function renderAdmin(env, headers) {
 <html lang="id">
 <head>
 <meta charset="UTF-8">
+<link rel="icon" href="/favicon.ico">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>⚙️ ADMIN PANEL | PromptLab Studio</title>
 <style>
