@@ -373,7 +373,7 @@ class ArticlePipeline {
       'openai/gpt-oss-120b:free'
     ];
     this.models = [...this.fallbackModels];
-    this.defaultSystem = 'Kamu adalah penulis artikel profesional Indonesia. Hindari pengulangan. Gunakan contoh konkret. Tulis dengan gaya retro 16-bit yang menghibur namun informatif.';
+    this.defaultSystem = 'Kamu adalah penulis artikel profesional Indonesia. Hindari pengulangan. Gunakan contoh konkret. Tulis dengan gaya yang informatif, jelas, dan enak dibaca.';
     this.systemPrompt = this.defaultSystem;
     this.maxRetries = 3;
   }
@@ -1048,10 +1048,21 @@ async function renderArticle(env, headers, slug) {
     -webkit-text-fill-color:transparent; background-clip:text;
   }
   .logo span { -webkit-text-fill-color:initial; }
-  .main { max-width:760px; margin:0 auto; padding:34px 22px 60px; }
+  .progress { position:fixed; top:0; left:0; height:3px; width:0; background:linear-gradient(90deg,var(--primary),var(--secondary)); z-index:100; transition:width 0.08s linear; }
+  .main { max-width:1080px; margin:0 auto; padding:34px 22px 60px; position:relative; z-index:1; }
+  .article-wrap { display:grid; grid-template-columns:240px 1fr; gap:34px; align-items:start; }
+  .toc-col { position:sticky; top:90px; }
+  .toc { background:var(--panel); border:1px solid var(--border); border-radius:18px; padding:20px; box-shadow:var(--shadow); max-height:calc(100vh - 120px); overflow:auto; }
+  .toc-title { font-family:'Space Grotesk',sans-serif; font-size:13px; font-weight:600; color:var(--text); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:14px; }
+  .toc ul { list-style:none; }
+  .toc li { margin-bottom:9px; line-height:1.45; }
+  .toc li.lvl-3 { padding-left:14px; font-size:13px; }
+  .toc a { color:var(--muted); text-decoration:none; font-size:14px; transition:color 0.15s; }
+  .toc a:hover { color:var(--primary); }
+  .article-col { min-width:0; }
   .article-header {
     background:linear-gradient(160deg,var(--panel),var(--bg-soft));
-    border:1px solid var(--border); border-radius:20px; padding:34px 32px; margin-bottom:30px;
+    border:1px solid var(--border); border-radius:20px; padding:34px 32px; margin-bottom:24px;
     box-shadow:var(--shadow); position:relative; overflow:hidden;
   }
   .article-header::before {
@@ -1073,10 +1084,10 @@ async function renderArticle(env, headers, slug) {
   }
   .article-content h2 {
     font-family:'Space Grotesk',sans-serif; font-size:23px; color:#fff; margin:34px 0 14px; font-weight:700;
-    padding-bottom:10px; border-bottom:2px solid var(--border);
+    padding-bottom:10px; border-bottom:2px solid var(--border); scroll-margin-top:90px;
   }
-  .article-content h3 { font-family:'Space Grotesk',sans-serif; font-size:19px; color:var(--primary); margin:26px 0 12px; font-weight:600; }
-  .article-content h4 { font-size:16px; color:var(--text); margin:22px 0 10px; font-weight:600; }
+  .article-content h3 { font-family:'Space Grotesk',sans-serif; font-size:19px; color:var(--primary); margin:26px 0 12px; font-weight:600; scroll-margin-top:90px; }
+  .article-content h4 { font-size:16px; color:var(--text); margin:22px 0 10px; font-weight:600; scroll-margin-top:90px; }
   .article-content p { margin-bottom:20px; color:#d6d9ee; }
   .article-content ul, .article-content ol { margin:0 0 22px 22px; }
   .article-content li { margin-bottom:11px; color:#d6d9ee; }
@@ -1103,36 +1114,57 @@ async function renderArticle(env, headers, slug) {
     padding:12px 22px; border-radius:999px; box-shadow:0 10px 26px rgba(139,147,255,0.35); transition:transform 0.15s, box-shadow 0.15s;
   }
   .back:hover { transform:translateY(-2px); box-shadow:0 14px 32px rgba(139,147,255,0.5); }
-  .footer { text-align:center; padding:30px 20px; color:var(--muted); font-size:13px; border-top:1px solid var(--border); margin-top:40px; }
-  @media(max-width:600px){
+  .footer { text-align:center; padding:30px 20px; color:var(--muted); font-size:13px; border-top:1px solid var(--border); margin-top:50px; }
+  @media(max-width:860px){
+    .article-wrap{ grid-template-columns:1fr; }
+    .toc-col{ position:static; }
     .article-header h1{font-size:24px} .article-content{padding:26px 20px} .main{padding:22px 14px 50px}
   }
 </style>
 </head>
 <body>
+<div class="progress" id="progress"></div>
 <header class="header">
   <div class="logo"><span>🧪</span> PromptLab Studio</div>
 </header>
 <main class="main">
-  <article class="article-header">
-    <h1>${escapeHtml(article.title)}</h1>
-    <div class="article-meta">
-      <span>📅 ${new Date(article.published_at).toLocaleDateString('id-ID', { day:'numeric', month:'long', year:'numeric' })}</span>
-      <span>📝 ${article.word_count} kata</span>
-      <span class="pill">${(article.category || 'GENERAL').toUpperCase()}</span>
+  <div class="article-wrap">
+    <aside class="toc-col">
+      ${toc.length ? `<nav class="toc"><div class="toc-title">📑 Daftar Isi</div><ul>${toc.map(t => `<li class="lvl-${t.lvl}"><a href="#${t.id}">${escapeHtml(t.text)}</a></li>`).join('')}</ul></nav>` : ''}
+    </aside>
+    <div class="article-col">
+      <article class="article-header">
+        <h1>${escapeHtml(article.title)}</h1>
+        <div class="article-meta">
+          <span>📅 ${new Date(article.published_at).toLocaleDateString('id-ID', { day:'numeric', month:'long', year:'numeric' })}</span>
+          <span>📝 ${article.word_count} kata</span>
+          <span>⏱ ${readMins} mnt baca</span>
+          <span class="pill">${(article.category || 'GENERAL').toUpperCase()}</span>
+        </div>
+      </article>
+      <div class="article-content">
+        ${contentHtml}
+      </div>
+      <div class="tags">
+        ${(article.keywords || []).map(k => `<span class="tag">#${escapeHtml(k)}</span>`).join('')}
+      </div>
+      <a href="/" class="back">← Kembali ke Beranda</a>
     </div>
-  </article>
-  <div class="article-content">
-    ${contentHtml}
   </div>
-  <div class="tags">
-    ${(article.keywords || []).map(k => `<span class="tag">#${escapeHtml(k)}</span>`).join('')}
-  </div>
-  <a href="/" class="back">← Kembali ke Beranda</a>
 </main>
 <footer class="footer">
-  <p>© 2026 PromptLab Studio • Ditulis otomatis oleh AI • Tampilan 32-bit</p>
+  <p>© 2026 PromptLab Studio • Ditulis otomatis oleh AI Agent</p>
 </footer>
+<script>
+  window.addEventListener('scroll', function(){
+    var el = document.documentElement;
+    var sc = el.scrollTop || document.body.scrollTop;
+    var max = el.scrollHeight - el.clientHeight;
+    var p = max > 0 ? (sc / max * 100) : 0;
+    var bar = document.getElementById('progress');
+    if (bar) bar.style.width = p + '%';
+  });
+</script>
 </body>
 </html>`;
 
@@ -1147,31 +1179,36 @@ async function renderLogin(env, headers, wrong) {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>🔐 ADMIN LOGIN | PromptLab Studio</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
-  :root { --bg-dark:#080814; --bg-panel:#141430; --accent:#ff3864; --accent2:#21e6c1; --accent3:#ffd23f; --text:#ececff; --text-dim:#7a7aa8; --border:#2a2a52; }
+  @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap');
+  :root {
+    --bg:#0b0e1f; --panel:#171c3a; --primary:#8b93ff; --secondary:#46d6c4;
+    --text:#e9ebf7; --muted:#9aa1c4; --border:rgba(255,255,255,0.08);
+  }
   * { box-sizing:border-box; margin:0; padding:0; }
-  body { font-family:'Press Start 2P',monospace; background:var(--bg-dark); color:var(--text); min-height:100vh; display:flex; align-items:center; justify-content:center; image-rendering:pixelated; }
-  body::before { content:''; position:fixed; inset:0; z-index:0; pointer-events:none; background-image:linear-gradient(rgba(33,230,193,0.05) 1px,transparent 1px),linear-gradient(90deg,rgba(33,230,193,0.05) 1px,transparent 1px); background-size:28px 28px; }
-  body::after { content:''; position:fixed; inset:0; z-index:9999; pointer-events:none; background:repeating-linear-gradient(0deg,rgba(0,0,0,0.22),rgba(0,0,0,0.22) 1px,transparent 1px,transparent 3px); animation:flicker 0.13s infinite; }
-  @keyframes flicker { 0%{opacity:0.96} 50%{opacity:0.93} 100%{opacity:0.96} }
-  .box { position:relative; z-index:2; background:var(--bg-panel); border:4px solid var(--accent); padding:36px; width:min(90vw,420px); text-align:center; box-shadow:6px 6px 0 rgba(0,0,0,0.5); }
-  .box h1 { font-size:16px; color:var(--accent3); text-shadow:2px 2px 0 var(--accent); margin-bottom:8px; }
-  .box .sub { font-size:9px; color:var(--accent2); margin-bottom:24px; }
-  .box .err { font-size:9px; color:var(--accent); margin-bottom:16px; }
-  .box input { width:100%; font-family:'Press Start 2P',monospace; font-size:11px; padding:12px; background:var(--bg-dark); color:var(--text); border:3px solid var(--accent2); margin-bottom:18px; }
-  .box button { width:100%; font-family:'Press Start 2P',monospace; font-size:11px; padding:12px; background:var(--accent); color:var(--bg-dark); border:3px solid var(--accent3); cursor:pointer; box-shadow:4px 4px 0 var(--accent3); }
-  .box button:hover { transform:translateY(-2px); }
-  .box .hint { font-size:8px; color:var(--text-dim); margin-top:18px; }
+  body {
+    font-family:'Plus Jakarta Sans',system-ui,sans-serif; background:radial-gradient(1100px 600px at 50% -12%, #1a1f4d 0%, var(--bg) 60%);
+    background-attachment:fixed; color:var(--text); min-height:100vh; display:flex; align-items:center; justify-content:center; -webkit-font-smoothing:antialiased;
+  }
+  .box { position:relative; z-index:2; background:var(--panel); border:1px solid var(--border); border-radius:24px; padding:40px; width:min(90vw,420px); text-align:center; box-shadow:0 24px 60px rgba(0,0,0,0.5); }
+  .box .logo { font-family:'Space Grotesk',sans-serif; font-size:22px; font-weight:700; margin-bottom:6px; display:flex; align-items:center; justify-content:center; gap:8px;
+    background:linear-gradient(90deg,var(--primary),var(--secondary)); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+  .box .sub { font-size:14px; color:var(--muted); margin-bottom:26px; }
+  .box .err { font-size:14px; color:#ff6b8a; margin-bottom:16px; }
+  .box input { width:100%; font-size:15px; padding:14px 16px; background:rgba(11,14,31,0.6); color:var(--text); border:1px solid var(--border); border-radius:12px; margin-bottom:18px; outline:none; transition:border-color 0.15s; }
+  .box input:focus { border-color:var(--primary); box-shadow:0 0 0 3px rgba(139,147,255,0.15); }
+  .box button { width:100%; font-size:15px; font-weight:600; padding:14px; background:linear-gradient(90deg,var(--primary),#7b83f0); color:#0b0e1f; border:none; border-radius:12px; cursor:pointer; transition:transform 0.15s, box-shadow 0.15s; }
+  .box button:hover { transform:translateY(-2px); box-shadow:0 10px 24px rgba(139,147,255,0.35); }
+  .box .hint { font-size:13px; color:var(--muted); margin-top:18px; }
 </style>
 </head>
 <body>
   <div class="box">
-    <h1>🔐 ADMIN LOGIN</h1>
-    <div class="sub">PromptLab Studio • AI Agent Autonomous</div>
-    ${wrong ? '<div class="err">❌ PASSWORD SALAH!</div>' : ''}
+    <div class="logo"><span>🧪</span> PromptLab Studio</div>
+    <div class="sub">Masuk ke panel admin</div>
+    ${wrong ? '<div class="err">❌ Password salah!</div>' : ''}
     <form method="POST" action="/rahasia-admin">
-      <input type="password" name="password" placeholder="PASSWORD" autofocus>
-      <button type="submit">► LOGIN</button>
+      <input type="password" name="password" placeholder="Password admin" autofocus>
+      <button type="submit">Masuk</button>
     </form>
     <div class="hint">Buka /rahasia-admin atau tekan CTRL+SHIFT+A</div>
   </div>
