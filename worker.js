@@ -542,7 +542,6 @@ async function renderHomepage(env, headers) {
 <main class="main">
   <section class="hero">
     <h1>▶ WELCOME TO PROMPTLAB STUDIO ◀</h1>
-    <p>Semua content di-generate secara otomatis oleh AI melalui sequential pipeline yang dirancang khusus untuk memastikan hasil yang seamless dan anti-failure.</p>
     <span class="press-start">▶ PRESS START TO READ ARTICLES ◀</span>
   </section>
   <div class="stats">
@@ -580,7 +579,6 @@ async function renderHomepage(env, headers) {
     <div class="pixel-art">👾 🕹️ 🎮 👾</div>
     <p>© 2026 PromptLab Studio. All rights reserved. • Powered by AI</p>
     <p style="margin-top:5px;">INSERT COIN TO CONTINUE... <span class="cursor-blink"></span></p>
-    <div style="margin-top:10px;"><span class="rainbow-text">◄ PRESS CTRL+SHIFT+A FOR ADMIN ►</span></div>
   </footer>
   <script>
     document.addEventListener('keydown', function(e){
