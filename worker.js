@@ -482,7 +482,7 @@ class ArticlePipeline {
         });
 
         const model = this.models[0];
-        const data = await this.callLLM(this.activeProvider, model, this.systemPrompt, this.buildPrompt(stepName, topic, keywords, previousData), stepName === 'polish' ? 17000 : stepName === 'draft' ? 8192 : 4000);
+        const data = await this.callLLM(this.activeProvider, model, this.systemPrompt, this.buildPrompt(stepName, topic, keywords, previousData), stepName === 'polish' ? 6000 : stepName === 'draft' ? 8192 : 4000);
 
         const validation = this.validate(stepName, data);
         if (validation.valid) {
@@ -506,7 +506,7 @@ class ArticlePipeline {
     // Fallback models
     for (let i = 1; i < this.models.length; i++) {
       try {
-        const data = await this.callLLM(this.activeProvider, this.models[i], this.systemPrompt, this.buildPrompt(stepName, topic, keywords, previousData), stepName === 'polish' ? 17000 : stepName === 'draft' ? 8192 : 4000);
+        const data = await this.callLLM(this.activeProvider, this.models[i], this.systemPrompt, this.buildPrompt(stepName, topic, keywords, previousData), stepName === 'polish' ? 6000 : stepName === 'draft' ? 8192 : 4000);
         const validation = this.validate(stepName, data);
         if (validation.valid) {
           await this.updateQueue(queueId, {
@@ -580,9 +580,14 @@ class ArticlePipeline {
     const url = prov.baseUrl;
     if (!url) throw new Error('No base URL for ' + providerName);
 
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 25000);
+
+    try {
     if (providerName === 'anthropic') {
       const res = await fetch(url, {
         method: 'POST',
+        signal: ctrl.signal,
         headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
         body: JSON.stringify({
           model: model,
@@ -599,6 +604,7 @@ class ArticlePipeline {
     // OpenAI-compatible (openrouter, openai, deepseek, opencode, ...)
     const res = await fetch(url, {
       method: 'POST',
+      signal: ctrl.signal,
       headers: { 'content-type': 'application/json', 'Authorization': `Bearer ${key}` },
       body: JSON.stringify({
         model: model,
@@ -613,6 +619,9 @@ class ArticlePipeline {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     return data.choices[0].message.content;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async createQueue(topic, keywords, category) {
