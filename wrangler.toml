@@ -1,0 +1,15 @@
+# wrangler.toml - Cloudflare Workers Configuration
+# Retro AI Blog - 16-Bit Nostalgia Edition
+
+name = "retro-ai-blog"
+main = "worker.js"
+compatibility_date = "2026-07-09"
+
+# Environment variables (public)
+[vars]
+# SUPABASE_URL = "https://your-project.supabase.co"  # Set via: wrangler secret put
+
+# Secrets (set via CLI: wrangler secret put <NAME>)
+# OPENROUTER_API_KEY = "sk-or-v1-..."
+# SUPABASE_URL = "https://..."
+# SUPABASE_ANON_KEY = "eyJ..."
