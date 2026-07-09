@@ -482,7 +482,7 @@ class ArticlePipeline {
         });
 
         const model = this.models[0];
-        const data = await this.callLLM(this.activeProvider, model, this.systemPrompt, this.buildPrompt(stepName, topic, keywords, previousData), stepName === 'polish' ? 17000 : 4000);
+        const data = await this.callLLM(this.activeProvider, model, this.systemPrompt, this.buildPrompt(stepName, topic, keywords, previousData), stepName === 'polish' ? 17000 : stepName === 'draft' ? 8192 : 4000);
 
         const validation = this.validate(stepName, data);
         if (validation.valid) {
@@ -506,7 +506,7 @@ class ArticlePipeline {
     // Fallback models
     for (let i = 1; i < this.models.length; i++) {
       try {
-        const data = await this.callLLM(this.activeProvider, this.models[i], this.systemPrompt, this.buildPrompt(stepName, topic, keywords, previousData), stepName === 'polish' ? 17000 : 4000);
+        const data = await this.callLLM(this.activeProvider, this.models[i], this.systemPrompt, this.buildPrompt(stepName, topic, keywords, previousData), stepName === 'polish' ? 17000 : stepName === 'draft' ? 8192 : 4000);
         const validation = this.validate(stepName, data);
         if (validation.valid) {
           await this.updateQueue(queueId, {
