@@ -306,9 +306,9 @@ class ArticlePipeline {
   constructor(env) {
     this.env = env;
     this.fallbackModels = [
-      'deepseek/deepseek-chat-v3-0324:free',
-      'meta-llama/llama-4-maverick:free',
-      'mistralai/mistral-small-3.1-24b-instruct:free'
+      'meta-llama/llama-3.3-70b-instruct:free',
+      'google/gemma-4-26b-a4b-it:free',
+      'openai/gpt-oss-120b:free'
     ];
     this.models = [...this.fallbackModels];
     this.defaultSystem = 'Kamu adalah penulis artikel profesional Indonesia. Hindari pengulangan. Gunakan contoh konkret. Tulis dengan gaya retro 16-bit yang menghibur namun informatif.';
@@ -334,6 +334,7 @@ class ArticlePipeline {
     }
 
     // STEP 2: Draft (MUST PASS - only runs if Step 1 valid)
+    await this.sleep(2000);
     const step2 = await this.runStep(queueId, 2, 'draft', topic, keywords, step1.data);
     if (!step2.success) {
       await this.updateQueue(queueId, { status: 'needs_review', last_error: step2.error, error_step: 2 });
@@ -341,6 +342,7 @@ class ArticlePipeline {
     }
 
     // STEP 3: Polish (MUST PASS - only runs if Step 2 valid)
+    await this.sleep(2000);
     const step3 = await this.runStep(queueId, 3, 'polish', topic, keywords, step2.data);
     if (!step3.success) {
       const articleId = await this.publishDraft(queueId, step1.data, step2.data, category);
@@ -380,10 +382,11 @@ class ArticlePipeline {
         lastError = validation.error;
         await this.sleep(2000 * Math.pow(2, attempt));
 
-      } catch (error) {
-        lastError = error.message;
-        await this.sleep(2000 * Math.pow(2, attempt));
-      }
+       } catch (error) {
+         lastError = error.message;
+         const wait = lastError.includes('429') ? 15000 : 2000 * Math.pow(2, attempt);
+         await this.sleep(wait);
+       }
     }
 
     // Fallback models
