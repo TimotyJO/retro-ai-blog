@@ -1,0 +1,17 @@
+name: Generate Article
+
+on:
+  schedule:
+    # 2x sehari (sesuai fitur "2 articles/day")
+    - cron: '0 1,13 * * *'
+  workflow_dispatch:
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger article generation
+        run: |
+          curl -s -X POST "${{ secrets.API_ENDPOINT }}/api/generate" \
+            -H "Content-Type: application/json" \
+            -d '{}'

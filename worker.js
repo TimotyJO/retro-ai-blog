@@ -45,9 +45,22 @@ async function handleAPI(request, env, url, headers) {
 
   // POST /api/generate - Trigger article generation
   if (url.pathname === '/api/generate' && request.method === 'POST') {
-    const { topic, keywords, category } = await request.json();
+    let body = {};
+    try { body = await request.json(); } catch (e) { body = {}; }
+    const { topic, keywords, category } = body;
+    const topics = [
+      'Sejarah Evolusi Konsol Game 16-Bit',
+      'Mengapa Pixel Art Tetap Relevan di Era Modern',
+      'Kisah Lahirnya Soundtrack Chiptune',
+      'Perbandingan RPG Klasik vs RPG Modern',
+      'Filosofi Game Arcade Tahun 90an',
+      'Nostalgia Cartridge vs CD-ROM',
+      'Desain Level Game Retro yang Jenius',
+      'Budaya Gaming Anak 90an di Indonesia'
+    ];
+    const finalTopic = topic || topics[Math.floor(Math.random() * topics.length)];
     const pipeline = new ArticlePipeline(env);
-    const result = await pipeline.generateArticle(topic, keywords, category);
+    const result = await pipeline.generateArticle(finalTopic, keywords, category);
     return new Response(JSON.stringify(result), { headers });
   }
 
