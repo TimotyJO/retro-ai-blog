@@ -450,15 +450,24 @@ class ArticlePipeline {
     await this.sleep(2000);
     const step3 = await this.runStep(queueId, 3, 'polish', topic, keywords, step2.data);
     if (!step3.success) {
-      const articleId = await this.publishDraft(queueId, step1.data, step2.data, category);
-      return { success: true, warning: 'Polish failed, published as draft', articleId, queueId };
+      try {
+        const articleId = await this.publishDraft(queueId, step1.data, step2.data, category);
+        return { success: true, warning: 'Polish failed, published as draft', articleId, queueId };
+      } catch (e) {
+        await this.updateQueue(queueId, { status: 'failed', last_error: 'publishDraft gagal: ' + e.message, error_step: 3 });
+        return { success: false, error: 'publishDraft gagal: ' + e.message, queueId };
+      }
     }
 
     // ALL PASSED - Publish
-    const articleId = await this.publishArticle(queueId, step1.data, step2.data, step3.data, category);
-    await this.updateQueue(queueId, { status: 'published', article_id: articleId, completed_at: new Date().toISOString() });
-
-    return { success: true, articleId, queueId };
+    try {
+      const articleId = await this.publishArticle(queueId, step1.data, step2.data, step3.data, category);
+      await this.updateQueue(queueId, { status: 'published', article_id: articleId, completed_at: new Date().toISOString() });
+      return { success: true, articleId, queueId };
+    } catch (e) {
+      const articleId = await this.publishDraft(queueId, step1.data, step2.data, category);
+      return { success: true, warning: 'Publish gagal, fallback ke draft: ' + e.message, articleId, queueId };
+    }
   }
 
   async runStep(queueId, stepNum, stepName, topic, keywords, previousData) {
@@ -532,7 +541,7 @@ class ArticlePipeline {
         const content = typeof d === 'string' ? d : d.content || '';
         if (content.length < 2000) return { valid: false, error: `Too short: ${content.length}` };
         const words = content.split(/\s+/).length;
-        if (words < 400) return { valid: false, error: `Too few words: ${words}` };
+        if (words < 950) return { valid: false, error: `Too few words: ${words}` };
         const sentences = content.split(/[.!?]+/).filter(s => s.trim().length > 20);
         const unique = new Set(sentences.map(s => s.trim().toLowerCase()));
         if (unique.size < sentences.length * 0.7) return { valid: false, error: 'Too much repetition' };
@@ -542,9 +551,11 @@ class ArticlePipeline {
         try {
           const parsed = JSON.parse(d);
           if (!parsed.content || parsed.content.length < 2500) return { valid: false, error: 'Content too short' };
-          if (!parsed.metaDescription || parsed.metaDescription.length < 100 || parsed.metaDescription.length > 170) {
-            return { valid: false, error: 'Invalid meta description' };
+          const md = (parsed.metaDescription || '').replace(/<[^>]+>/g, '').replace(/[*_#`]+/g, '').trim();
+          if (md.length < 150 || md.length > 160) {
+            return { valid: false, error: `Meta description harus 150-160 karakter (saat ini ${md.length})` };
           }
+          parsed.metaDescription = md;
           return { valid: true, sanitized: parsed };
         } catch (e) { return { valid: false, error: 'Invalid format' }; }
       }
@@ -555,8 +566,8 @@ class ArticlePipeline {
   buildPrompt(step, topic, keywords, previousData) {
     const prompts = {
       outline: `Buat outline artikel dalam Bahasa Indonesia tentang "${topic}". Keywords: ${keywords && keywords.length ? keywords.join(', ') : 'tutorial, panduan'}. Output JSON: {"title": "...", "sections": [{"name": "...", "keyPoints": ["..."]}]}`,
-      draft: `Tulis artikel lengkap dalam Bahasa Indonesia tentang "${topic}". Outline: ${JSON.stringify(previousData)}. Panjang 800-1000 kata. Tone: santai seperti ngobrol sama teman. Gunakan "kamu" bukan "Anda".`,
-      polish: `Polish artikel ini. Output JSON: {"title": "...", "content": "...", "metaDescription": "...", "excerpt": "..."}. Artikel: ${typeof previousData === 'string' ? previousData.substring(0, 5000) : JSON.stringify(previousData)}`
+      draft: `Tulis artikel kreatif dalam Bahasa Indonesia tentang "${topic}". Outline: ${JSON.stringify(previousData)}. Panjang minimal 1000 kata. Gunakan **bold** untuk tekanan, *italic* untuk kutipan/ucapan orang. Selipkan nama tokoh terkenal (Steve Jobs, Elon Musk, dll) dengan referensi temporal seperti "5 tahun lalu", "pada 2023". Tone santai seperti ngobrol sama teman. Gunakan "kamu" bukan "Anda".`,
+      polish: `Perbaiki artikel ini untuk SEO Indonesia. Pertahankan **bold** dan *italic* yang sudah ada di konten. metaDescription: 150-160 karakter, 1 kalimat ajakan, tanpa HTML/markdown, mengandung kata kunci utama. Output JSON: {"title": "...", "content": "...", "metaDescription": "...", "excerpt": "..."}. Artikel: ${typeof previousData === 'string' ? previousData.substring(0, 5000) : JSON.stringify(previousData)}`
     };
     return prompts[step];
   }
@@ -633,61 +644,79 @@ class ArticlePipeline {
   }
 
   async publishArticle(queueId, outline, draft, polish, category) {
-    const article = {
-      title: polish.title || outline.title,
-      slug: this.slugify(polish.title || outline.title),
-      content: polish.content,
-      excerpt: polish.excerpt,
-      meta_description: polish.metaDescription,
-      keywords: polish.keywords || [],
-      category: category || 'general',
-      status: 'published',
-      word_count: polish.content.split(/\s+/).length,
-      ai_model: 'sequential-pipeline',
-      published_at: new Date().toISOString()
-    };
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const slug = attempt === 0
+        ? this.slugify(polish.title || outline.title)
+        : this.slugify(polish.title || outline.title) + '-' + Math.random().toString(36).substring(2, 6);
+      const article = {
+        title: polish.title || outline.title,
+        slug,
+        content: polish.content,
+        excerpt: polish.excerpt,
+        meta_description: polish.metaDescription,
+        keywords: polish.keywords || [],
+        category: category || 'general',
+        status: 'published',
+        word_count: polish.content.split(/\s+/).length,
+        ai_model: 'sequential-pipeline',
+        published_at: new Date().toISOString()
+      };
 
-    const response = await fetch(`${this.env.SUPABASE_URL}/rest/v1/articles`, {
-      method: 'POST',
-      headers: {
-        'apikey': this.env.SUPABASE_ANON_KEY,
-        'Authorization': `Bearer ${this.env.SUPABASE_ANON_KEY}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'return=representation'
-      },
-      body: JSON.stringify(article)
-    });
-    const data = await response.json();
-    return data[0].id;
+      const response = await fetch(`${this.env.SUPABASE_URL}/rest/v1/articles`, {
+        method: 'POST',
+        headers: {
+          'apikey': this.env.SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${this.env.SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=representation'
+        },
+        body: JSON.stringify(article)
+      });
+      if (response.ok) {
+        const data = await response.json();
+        return data[0].id;
+      }
+      if (response.status === 409 && attempt < 2) continue;
+      throw new Error(`publishArticle gagal (${response.status}): ${await response.text()}`);
+    }
   }
 
   async publishDraft(queueId, outline, draft, category) {
-    const article = {
-      title: outline.title,
-      slug: this.slugify(outline.title),
-      content: typeof draft === 'string' ? draft : draft.content || JSON.stringify(draft),
-      excerpt: draft.substring ? draft.substring(0, 200) + '...' : '',
-      meta_description: `Artikel tentang ${outline.title}`,
-      keywords: [],
-      category: category || 'general',
-      status: 'published',
-      word_count: (typeof draft === 'string' ? draft : '').split(/\s+/).length,
-      ai_model: 'sequential-pipeline-draft',
-      published_at: new Date().toISOString()
-    };
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const slug = attempt === 0
+        ? this.slugify(outline.title)
+        : this.slugify(outline.title) + '-' + Math.random().toString(36).substring(2, 6);
+      const article = {
+        title: outline.title,
+        slug,
+        content: typeof draft === 'string' ? draft : draft.content || JSON.stringify(draft),
+        excerpt: draft.substring ? draft.substring(0, 200) + '...' : '',
+        meta_description: `Artikel tentang ${outline.title}`,
+        keywords: [],
+        category: category || 'general',
+        status: 'published',
+        word_count: (typeof draft === 'string' ? draft : '').split(/\s+/).length,
+        ai_model: 'sequential-pipeline-draft',
+        published_at: new Date().toISOString()
+      };
 
-    const response = await fetch(`${this.env.SUPABASE_URL}/rest/v1/articles`, {
-      method: 'POST',
-      headers: {
-        'apikey': this.env.SUPABASE_ANON_KEY,
-        'Authorization': `Bearer ${this.env.SUPABASE_ANON_KEY}`,
-        'Content-Type': 'application/json',
-        'Prefer': 'return=representation'
-      },
-      body: JSON.stringify(article)
-    });
-    const data = await response.json();
-    return data[0].id;
+      const response = await fetch(`${this.env.SUPABASE_URL}/rest/v1/articles`, {
+        method: 'POST',
+        headers: {
+          'apikey': this.env.SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${this.env.SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=representation'
+        },
+        body: JSON.stringify(article)
+      });
+      if (response.ok) {
+        const data = await response.json();
+        return data[0].id;
+      }
+      if (response.status === 409 && attempt < 2) continue;
+      throw new Error(`publishDraft gagal (${response.status}): ${await response.text()}`);
+    }
   }
 
   slugify(text) {
