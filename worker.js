@@ -21,7 +21,7 @@ export default {
     if (url.pathname === '/') {
       return await renderHomepage(env, headers);
     }
-    if (url.pathname === '/admin') {
+    if (url.pathname === '/admin' || url.pathname === '/rahasia-admin') {
       if (url.searchParams.get('logout')) {
         const cookie = `admin_session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
         return new Response(null, { status: 302, headers: { 'Location': '/', 'Set-Cookie': cookie } });
@@ -35,7 +35,7 @@ export default {
         try { const form = await request.formData(); pwd = form.get('password') || ''; } catch (e) {}
         if (pwd === env.ADMIN_PASSWORD) {
           const cookie = `admin_session=${env.ADMIN_SESSION}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=86400`;
-          return new Response(null, { status: 302, headers: { 'Location': '/admin', 'Set-Cookie': cookie } });
+          return new Response(null, { status: 302, headers: { 'Location': url.pathname, 'Set-Cookie': cookie } });
         }
         return renderLogin(env, headers, true);
       }
@@ -701,11 +701,11 @@ async function renderLogin(env, headers, wrong) {
     <h1>🔐 ADMIN LOGIN</h1>
     <div class="sub">PromptLab Studio • AI Agent Autonomous</div>
     ${wrong ? '<div class="err">❌ PASSWORD SALAH!</div>' : ''}
-    <form method="POST" action="/admin">
+    <form method="POST" action="/rahasia-admin">
       <input type="password" name="password" placeholder="PASSWORD" autofocus>
       <button type="submit">► LOGIN</button>
     </form>
-    <div class="hint">Tekan CTRL+SHIFT+A untuk buka panel ini</div>
+    <div class="hint">Buka /rahasia-admin atau tekan CTRL+SHIFT+A</div>
   </div>
 </body>
 </html>`;
