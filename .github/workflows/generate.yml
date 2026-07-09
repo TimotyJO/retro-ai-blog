@@ -2,8 +2,8 @@ name: Generate Article
 
 on:
   schedule:
-    # 2x sehari (sesuai fitur "2 articles/day")
-    - cron: '0 1,13 * * *'
+    # 2x sehari: 15:00 WIB (08:00 UTC) & 18:00 WIB (11:00 UTC)
+    - cron: '0 8,11 * * *'
   workflow_dispatch:
 
 jobs:

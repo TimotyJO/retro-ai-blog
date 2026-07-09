@@ -36,8 +36,17 @@ INSERT INTO agent_config (category, model, role_prompt) VALUES
 ('crypto', 'meta-llama/llama-3.3-70b-instruct:free', 'Kamu adalah Crypto Guide yang hati hati. Jelaskan blockchain dan crypto secara sederhana, selalu sertakan peringatan risiko, gunakan bahasa santai, dan beri analogi kehidupan sehari hari.')
 ON CONFLICT (category) DO NOTHING;
 
+-- Add provider column to agent_config
+ALTER TABLE agent_config ADD COLUMN IF NOT EXISTS provider TEXT DEFAULT 'openrouter';
+
 -- Add write_by_ai flag to articles
 ALTER TABLE articles ADD COLUMN IF NOT EXISTS write_by_ai BOOLEAN DEFAULT TRUE;
+
+-- Default provider configuration (API keys managed via admin UI)
+INSERT INTO settings (key, value) VALUES ('providers', '{
+  "openrouter": {"baseUrl": "https://openrouter.ai/api/v1/chat/completions", "key": ""},
+  "deepseek": {"baseUrl": "https://api.deepseek.com/v1/chat/completions", "key": ""}
+}') ON CONFLICT (key) DO NOTHING;
 
 -- Topic pools per category (used for daily random generation)
 INSERT INTO settings (key, value) VALUES ('topic_pools', '{
@@ -88,6 +97,9 @@ CREATE POLICY "anon_update_articles" ON articles FOR UPDATE USING (true);
 DROP POLICY IF EXISTS "authenticated_update_queue" ON article_queue;
 DROP POLICY IF EXISTS "anon_update_queue" ON article_queue;
 CREATE POLICY "anon_update_queue" ON article_queue FOR UPDATE USING (true);
+
+DROP POLICY IF EXISTS "anon_delete_queue" ON article_queue;
+CREATE POLICY "anon_delete_queue" ON article_queue FOR DELETE USING (true);
 
 DROP POLICY IF EXISTS "admin_agent_config" ON agent_config;
 DROP POLICY IF EXISTS "anon_agent_config" ON agent_config;
