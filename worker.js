@@ -62,7 +62,7 @@ export default {
       return renderLogin(env, headers, false);
     }
     if (url.pathname.startsWith('/api/')) {
-      // Fire-and-forget for AI generation: return queueId immediately, pipeline runs in background
+      // Fast-return for AI generation: queue created, then pipeline runs asynchronously
       if (url.pathname === '/api/manual' && request.method === 'POST') {
         if (!isAdmin(request, env)) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers });
         let body = {};
@@ -73,7 +73,9 @@ export default {
           const categories = ['ai', 'marketing', 'freelance', 'coding', 'crypto'];
           const finalCategory = category || categories[Math.floor(Math.random() * categories.length)];
           const queueId = await pipeline.createQueue(topic || 'AI-generated', keywords || [], finalCategory);
-          ctx.waitUntil(pipeline.generateArticle(topic, keywords || [], finalCategory, queueId));
+          // Return queueId immediately, run pipeline in background (Worker keeps running until all async work completes)
+          const bgPromise = pipeline.generateArticle(topic, keywords || [], finalCategory, queueId);
+          if (ctx && ctx.waitUntil) ctx.waitUntil(bgPromise);
           return new Response(JSON.stringify({ success: true, queueId, status: 'processing' }), { headers });
         }
         if (!title) return new Response(JSON.stringify({ error: 'Title required' }), { status: 400, headers });
