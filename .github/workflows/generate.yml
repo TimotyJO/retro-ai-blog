@@ -14,4 +14,5 @@ jobs:
         run: |
           curl -s -X POST "${{ secrets.API_ENDPOINT }}/api/generate" \
             -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
             -d '{}'

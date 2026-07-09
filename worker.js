@@ -43,8 +43,12 @@ export default {
 async function handleAPI(request, env, url, headers) {
   headers['Content-Type'] = 'application/json';
 
-  // POST /api/generate - Trigger article generation
+  // POST /api/generate - Trigger article generation (protected by CRON_SECRET)
   if (url.pathname === '/api/generate' && request.method === 'POST') {
+    const auth = request.headers.get('Authorization');
+    if (!env.CRON_SECRET || auth !== `Bearer ${env.CRON_SECRET}`) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers });
+    }
     let body = {};
     try { body = await request.json(); } catch (e) { body = {}; }
     const { topic, keywords, category } = body;
