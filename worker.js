@@ -4,7 +4,7 @@
 // ============================================================
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const headers = {
       'Access-Control-Allow-Origin': '*',
@@ -62,6 +62,34 @@ export default {
       return renderLogin(env, headers, false);
     }
     if (url.pathname.startsWith('/api/')) {
+      // Fire-and-forget for AI generation: return queueId immediately, pipeline runs in background
+      if (url.pathname === '/api/manual' && request.method === 'POST') {
+        if (!isAdmin(request, env)) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers });
+        let body = {};
+        try { body = await request.json(); } catch (e) { body = {}; }
+        const { title, category, content, write_by_ai, topic, keywords } = body;
+        const pipeline = new ArticlePipeline(env);
+        if (write_by_ai) {
+          const categories = ['ai', 'marketing', 'freelance', 'coding', 'crypto'];
+          const finalCategory = category || categories[Math.floor(Math.random() * categories.length)];
+          const queueId = await pipeline.createQueue(topic || 'AI-generated', keywords || [], finalCategory);
+          ctx.waitUntil(pipeline.generateArticle(topic, keywords || [], finalCategory, queueId));
+          return new Response(JSON.stringify({ success: true, queueId, status: 'processing' }), { headers });
+        }
+        if (!title) return new Response(JSON.stringify({ error: 'Title required' }), { status: 400, headers });
+        const article = {
+          title, slug: pipeline.slugify(title), content: content || '',
+          excerpt: (content || '').substring(0, 200) + ((content && content.length > 200) ? '...' : ''),
+          meta_description: `Artikel tentang ${title}`, keywords: keywords || [], category: category || 'general',
+          status: 'published', word_count: (content || '').split(/\s+/).filter(Boolean).length,
+          ai_model: 'manual', write_by_ai: false, published_at: new Date().toISOString()
+        };
+        const res = await fetch(`${env.SUPABASE_URL}/rest/v1/articles`, { method: 'POST',
+          headers: { 'apikey': env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${env.SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+          body: JSON.stringify(article) });
+        const data = await res.json();
+        return new Response(JSON.stringify({ success: true, articleId: data[0] && data[0].id }), { headers });
+      }
       return await handleAPI(request, env, url, headers);
     }
     // Article page: /:slug
@@ -241,47 +269,6 @@ async function handleAPI(request, env, url, headers) {
     return new Response(JSON.stringify({ success: true }), { headers });
   }
 
-  // POST /api/manual - Manual article (admin). write_by_ai toggles AI generation.
-  if (url.pathname === '/api/manual' && request.method === 'POST') {
-    if (!isAdmin(request, env)) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers });
-    let body = {};
-    try { body = await request.json(); } catch (e) { body = {}; }
-    const { title, category, content, write_by_ai, topic, keywords } = body;
-    const pipeline = new ArticlePipeline(env);
-    if (write_by_ai) {
-      const categories = ['ai', 'marketing', 'freelance', 'coding', 'crypto'];
-      const finalCategory = category || categories[Math.floor(Math.random() * categories.length)];
-      const result = await pipeline.generateArticle(topic, keywords || [], finalCategory);
-      const status = result.success ? 200 : 500;
-      return new Response(JSON.stringify(result), { status, headers });
-    }
-    if (!title) return new Response(JSON.stringify({ error: 'Title required' }), { status: 400, headers });
-    const article = {
-      title,
-      slug: pipeline.slugify(title),
-      content: content || '',
-      excerpt: (content || '').substring(0, 200) + ((content && content.length > 200) ? '...' : ''),
-      meta_description: `Artikel tentang ${title}`,
-      keywords: keywords || [],
-      category: category || 'general',
-      status: 'published',
-      word_count: (content || '').split(/\s+/).filter(Boolean).length,
-      ai_model: 'manual',
-      write_by_ai: false,
-      published_at: new Date().toISOString()
-    };
-    const res = await fetch(`${env.SUPABASE_URL}/rest/v1/articles`, {
-      method: 'POST',
-      headers: {
-        'apikey': env.SUPABASE_ANON_KEY, 'Authorization': `Bearer ${env.SUPABASE_ANON_KEY}`,
-        'Content-Type': 'application/json', 'Prefer': 'return=representation'
-      },
-      body: JSON.stringify(article)
-    });
-    const data = await res.json();
-    return new Response(JSON.stringify({ success: true, articleId: data[0] && data[0].id }), { headers });
-  }
-
   // POST /api/retry/:id - Re-run generation for a failed/needs_review queue item (admin)
   if (url.pathname.match(/^\/api\/retry\/[\w-]+$/) && request.method === 'POST') {
     if (!isAdmin(request, env)) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers });
@@ -429,8 +416,8 @@ class ArticlePipeline {
     return pool[Math.floor(Math.random() * pool.length)];
   }
 
-  async generateArticle(topic, keywords, category) {
-    const queueId = await this.createQueue(topic, keywords, category);
+  async generateArticle(topic, keywords, category, existingQueueId) {
+    const queueId = existingQueueId || await this.createQueue(topic, keywords, category);
 
     // Load provider configs + per-category agent config
     this.providers = await getProviderConfig(this.env);
@@ -1761,7 +1748,7 @@ var PROV_DEFAULTS = {openrouter:'https://openrouter.ai/api/v1/chat/completions',
   async function saveAgents(){var agents=[];document.querySelectorAll('.agent-prov').forEach(function(sel){var cat=sel.dataset.cat;var prov=sel.value;var c=document.getElementById('model-container-'+cat);var model='';var os=c.querySelector('.agent-model-select');var fs=c.querySelector('.agent-model-fixed');var ip=c.querySelector('.agent-model-input');if(os&&os.style.display!=='none')model=os.value;else if(fs&&fs.style.display!=='none')model=fs.value;else if(ip)model=ip.value;var role=document.querySelector('.agent-role[data-cat="'+cat+'"]');agents.push({category:cat,model:model||null,role_prompt:(role?role.value:'')||null,provider:prov});});var res=await fetch('/api/agents',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({agents:agents})});document.getElementById('agent-msg').textContent=res.ok?'✔ TERSIMPAN':'✗ GAGAL';}
 
   // QUEUE ACTIONS
-  async function genTest(){var cats=['ai','marketing','freelance','coding','crypto'];var c=cats[Math.floor(Math.random()*cats.length)];var m=document.getElementById('gen-msg');m.textContent='⏳ Generating...';try{var res=await fetch('/api/manual',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'',category:c,content:'',write_by_ai:true,topic:''})});var data=await res.json();if(data.success){m.textContent='✔ Done ('+(data.warning||'published')+')';setTimeout(function(){location.reload()},2000);}else{m.textContent='✗ '+(data.error||'GAGAL');}}catch(e){m.textContent='✗ NETWORK ERROR';}}
+  async function genTest(){var cats=['ai','marketing','freelance','coding','crypto'];var c=cats[Math.floor(Math.random()*cats.length)];var m=document.getElementById('gen-msg');m.textContent='⏳ Submitting...';try{var res=await fetch('/api/manual',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'',category:c,content:'',write_by_ai:true,topic:''})});var data=await res.json();if(!data.queueId){m.textContent='✗ '+(data.error||'GAGAL');return;}var qid=data.queueId;var steps=['','Outline','Draft','Polish'];for(var i=0;i<80;i++){await new Promise(function(r){setTimeout(r,2500);});var qr=await fetch('/api/queue');var queue=await qr.json();var item=queue.find(function(q){return q.id===qid;});if(!item)continue;if(item.status==='published'){m.textContent='✔ Published!';setTimeout(function(){location.reload();},1500);return;}if(item.status==='failed'||item.status==='needs_review'){m.textContent='✗ '+(item.last_error||item.status);return;}m.textContent='⏳ '+steps[item.current_step||1]+'... (step '+(item.current_step||1)+'/3)';}m.textContent='⚠ Timeout - refresh to check';}catch(e){m.textContent='✗ NETWORK ERROR';}}
   async function retry(id){await fetch('/api/retry/'+id,{method:'POST'});location.reload();}
   async function reject(id){if(confirm('Delete this item?')){await fetch('/api/delete/'+id,{method:'DELETE'});location.reload();}}
 
